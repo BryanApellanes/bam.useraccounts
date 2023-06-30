@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net7.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="UserAccounts\UserAccounts_Generated\**" />
+    <EmbeddedResource Remove="UserAccounts\UserAccounts_Generated\**" />
+    <None Remove="UserAccounts\UserAccounts_Generated\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="UserAccounts\DaoAuthenticator.cs" />
+    <Compile Remove="UserAccounts\DaoIdentity.cs" />
+    <Compile Remove="UserAccounts\DaoRoleResolver.cs" />
+    <Compile Remove="UserAccounts\DaoUserResolver.cs" />
+    <Compile Remove="UserAccounts\UserManager.cs" />
+    <Compile Remove="UserAccounts\UserManagerEventArgs.cs" />
+    <Compile Remove="_UserAccounts\DaoPrincipal.cs" />
+    <Compile Remove="_UserAccounts\DaoRoleProvider.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Remove="UserAccounts\UserAccounts.db.js" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="UserAccounts\UserAccounts.db.js" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\bam.framework\submodules\bam.base\bam.base\bam.base.csproj" />
+    <ProjectReference Include="..\..\bam.framework\submodules\bam.configuration\bam.configuration\bam.configuration.csproj" />
+    <ProjectReference Include="..\..\bam.framework\submodules\bam.data.repositories\bam.data.repositories\bam.data.repositories.csproj" />
+    <ProjectReference Include="..\..\bam.framework\submodules\bam.data\bam.data\bam.data.csproj" />
+  </ItemGroup>
+
+</Project>
