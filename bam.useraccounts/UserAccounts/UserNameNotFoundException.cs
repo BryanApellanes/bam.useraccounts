@@ -12,7 +12,7 @@ namespace Bam.Net.UserAccounts
     public class UserNameNotFoundException: Exception
     {
         public UserNameNotFoundException(string userName)
-            : base("The specified user ({0}) was not found"._Format(userName))
+            : base("The specified user ({0}) was not found".Format(userName))
         { }    
     }
 }

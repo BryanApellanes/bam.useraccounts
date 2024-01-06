@@ -16,7 +16,7 @@ namespace Bam.Net.UserAccounts
         }
 
         public UserNameInUseException(string userName)
-            : base("The specified userName ({0}) is already in use"._Format(userName))
+            : base("The specified userName ({0}) is already in use".Format(userName))
         {
         }
     }
