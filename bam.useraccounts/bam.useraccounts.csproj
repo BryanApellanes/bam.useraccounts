@@ -41,4 +41,8 @@
     <ProjectReference Include="..\..\bam.data\bam.data\bam.data.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="UserAccounts\Data\" />
+  </ItemGroup>
+
 </Project>
