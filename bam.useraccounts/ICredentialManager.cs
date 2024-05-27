@@ -1,11 +1,11 @@
-﻿namespace Bam.Net.Encryption
+﻿namespace Bam.Encryption
 {
     /// <summary>
     /// Defines a read/write interface to credential management.
     /// </summary>
-    /// <seealso cref="Bam.Net.Encryption.ICredentialProvider" />
-    /// <seealso cref="Bam.Net.Encryption.INamedCredentialProvider" />
-    /// <seealso cref="Bam.Net.Encryption.IServiceCredentialProvider" />
+    /// <seealso cref="Bam.Encryption.ICredentialProvider" />
+    /// <seealso cref="Bam.Encryption.INamedCredentialProvider" />
+    /// <seealso cref="Bam.Encryption.IServiceCredentialProvider" />
     public interface ICredentialManager: ICredentialProvider, INamedCredentialProvider, IServiceCredentialProvider
     {
         void SetPassword(string password);

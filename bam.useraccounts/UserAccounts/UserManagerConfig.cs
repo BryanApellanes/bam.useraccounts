@@ -6,13 +6,13 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using Bam.Net.Messaging;
-using Bam.Net.ServiceProxy;
-using Bam.Net.Logging;
-using Bam.Net.Configuration;
+using Bam.Messaging;
+using Bam.ServiceProxy;
+using Bam.Logging;
+using Bam.Configuration;
 using System.IO;
 
-namespace Bam.Net.UserAccounts
+namespace Bam.UserAccounts
 {
     public class UserManagerConfig
     {

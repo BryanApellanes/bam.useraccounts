@@ -1,11 +1,11 @@
-﻿using Bam.Net.Logging;
+﻿using Bam.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Bam.Net.UserAccounts
+namespace Bam.UserAccounts
 {
     public class CompositeAuthenticator : Loggable, IAuthenticator
     {

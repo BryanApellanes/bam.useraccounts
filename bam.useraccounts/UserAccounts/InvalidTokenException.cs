@@ -7,7 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Bam.Net.UserAccounts
+namespace Bam.UserAccounts
 {
     public class InvalidTokenException: Exception
     {

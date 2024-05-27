@@ -1,8 +1,8 @@
-﻿using Bam.Net.Data;
-using Bam.Net.ServiceProxy;
-using Bam.Net.UserAccounts.Data;
+﻿using Bam.Data;
+using Bam.ServiceProxy;
+using Bam.UserAccounts.Data;
 
-namespace Bam.Net.UserAccounts
+namespace Bam.UserAccounts
 {
     /// <summary>
     /// When implemented, used to set the user for a given IHttpContext.

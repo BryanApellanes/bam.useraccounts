@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 using System.Reflection;
 using System.IO;
 
-namespace Bam.Net.Messaging
+namespace Bam.Messaging
 {
     public abstract class EmailComposer: IEmailComposer
     {

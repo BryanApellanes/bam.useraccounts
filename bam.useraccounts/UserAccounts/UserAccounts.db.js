@@ -1,5 +1,5 @@
 var database = {
-    nameSpace: "Bam.Net.UserAccounts.Data",
+    nameSpace: "Bam.UserAccounts.Data",
     schemaName: "UserAccounts",
     xrefs: [
         ["User", "Role"],

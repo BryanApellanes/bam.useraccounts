@@ -6,7 +6,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 
-namespace Bam.Net
+namespace Bam
 {
     [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
     public class RoleRequiredAttribute: Attribute

@@ -6,10 +6,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using Bam.Net.UserAccounts.Data;
-using Bam.Net.ServiceProxy;
+using Bam.UserAccounts.Data;
+using Bam.ServiceProxy;
 
-namespace Bam.Net.UserAccounts
+namespace Bam.UserAccounts
 {
     public class AccountConfirmationEmailData
     {

@@ -1,5 +1,5 @@
-﻿using Bam.Net;
-using Bam.Net.ServiceProxy;
+﻿using Bam;
+using Bam.ServiceProxy;
 using System;
 using System.Collections.Generic;
 using System.Linq;

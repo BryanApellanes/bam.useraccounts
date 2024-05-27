@@ -1,4 +1,4 @@
-﻿namespace Bam.Net.UserAccounts
+﻿namespace Bam.UserAccounts
 {
     public interface IRoleReader
     {

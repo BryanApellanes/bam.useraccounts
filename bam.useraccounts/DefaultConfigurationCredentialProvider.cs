@@ -1,11 +1,11 @@
-﻿using Bam.Net.Configuration;
+﻿using Bam.Configuration;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Bam.Net.Encryption
+namespace Bam.Encryption
 {
     public class DefaultConfigurationCredentialProvider : CredentialProvider
     {

@@ -7,7 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Bam.Net.Messaging
+namespace Bam.Messaging
 {
     public class NamedFormatEmailComposer: EmailComposer
     {

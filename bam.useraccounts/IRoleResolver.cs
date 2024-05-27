@@ -7,7 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Bam.Net.ServiceProxy
+namespace Bam.ServiceProxy
 {
     public interface IRoleResolver: IRequiresHttpContext
     {
