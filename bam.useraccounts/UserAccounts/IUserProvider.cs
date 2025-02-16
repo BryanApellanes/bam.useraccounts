@@ -1,6 +1,4 @@
-﻿using Bam.Data;
-using Bam.ServiceProxy;
-using Bam.UserAccounts.Data;
+﻿using Bam.ServiceProxy;
 
 namespace Bam.UserAccounts
 {

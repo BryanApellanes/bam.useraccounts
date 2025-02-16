@@ -1,10 +1,4 @@
-﻿using Bam;
-using Bam.ServiceProxy;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using Bam.ServiceProxy;
 using Newtonsoft.Json;
 
 namespace Bam.UserAccounts
