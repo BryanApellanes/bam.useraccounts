@@ -2,8 +2,8 @@
 {
     public class EmailTemplate
     {
-        public string EmailName { get; set; }
+        public string EmailName { get; set; } = null!;
         public bool IsHtml { get; set; }
-        public string TemplateContent { get; set; }
+        public string TemplateContent { get; set; } = null!;
     }
 }

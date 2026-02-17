@@ -2,7 +2,7 @@
 {
     public abstract class CredentialProvider : ICredentialProvider, INamedCredentialProvider, IServiceCredentialProvider
     {
-        static CredentialProvider _default;
+        static CredentialProvider _default = null!;
         static object _defaultLock = new object();
         public static CredentialProvider Default
         {

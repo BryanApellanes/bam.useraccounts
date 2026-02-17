@@ -8,6 +8,6 @@ namespace Bam.UserAccounts
     {
         IDatabase Database { get; set; }
         
-        void SetUser(IHttpContext context, IUser user, bool isAuthenticated, Database db = null);
+        void SetUser(IHttpContext context, IUser user, bool isAuthenticated, Database? db = null);
     }
 }

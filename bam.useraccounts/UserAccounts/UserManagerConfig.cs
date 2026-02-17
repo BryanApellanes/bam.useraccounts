@@ -12,8 +12,8 @@ namespace Bam.UserAccounts
         public UserManagerConfig()
         {
             EmailTemplateDirectoryPath = Path.Combine(AppPaths.Data, "EmailTemplates");
-            EmailComposerType = typeof(NamedFormatEmailComposer).AssemblyQualifiedName;
-            ApplicationNameResolverType = typeof(DefaultConfigurationApplicationNameProvider).AssemblyQualifiedName;
+            EmailComposerType = typeof(NamedFormatEmailComposer).AssemblyQualifiedName!;
+            ApplicationNameResolverType = typeof(DefaultConfigurationApplicationNameProvider).AssemblyQualifiedName!;
             SmtpSettingsVaultPath = Path.Combine(AppPaths.Data, "SmtpSettings.vault.sqlite");
             ApplicationName = DefaultConfiguration.DefaultApplicationName;
         }

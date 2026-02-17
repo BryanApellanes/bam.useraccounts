@@ -17,8 +17,8 @@ namespace Bam.Encryption
             }
         }
 
-        public string UserName { get; set; }
-        public string Password { get; set; }
+        public string UserName { get; set; } = null!;
+        public string Password { get; set; } = null!;
 
         /// <summary>
         /// Gets or sets the target service.  This will
@@ -30,7 +30,7 @@ namespace Bam.Encryption
         /// <value>
         /// The target service.
         /// </value>
-        public string TargetService { get; set; }
+        public string TargetService { get; set; } = null!;
 
         /// <summary>
         /// Gets or sets the name of the machine these credentials
@@ -39,6 +39,6 @@ namespace Bam.Encryption
         /// <value>
         /// The name of the machine.
         /// </value>
-        public string MachineName { get; set; }
+        public string MachineName { get; set; } = null!;
     }
 }

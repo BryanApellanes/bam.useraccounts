@@ -71,7 +71,7 @@ namespace Bam.Messaging
             return TemplateDirectory.GetFiles($"*.{FileExtension}").Select(fi => Path.GetFileNameWithoutExtension(fi.Name)).ToArray();
         }
 
-        Dictionary<string, EmailTemplate> _templateCache; 
+        Dictionary<string, EmailTemplate> _templateCache = null!;
         object _cacheLock = new object();
         public virtual EmailTemplate GetTemplate(string templateName)
         {
@@ -92,7 +92,7 @@ namespace Bam.Messaging
                 {
                     template = LoadTemplate(templateName);
                 }
-                _templateCache.AddMissing(templateName, template);
+                _templateCache!.TryAdd(templateName, template);
 
                 return template;
             }

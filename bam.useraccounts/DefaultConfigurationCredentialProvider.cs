@@ -20,7 +20,7 @@ namespace Bam.Encryption
         /// </value>
         public string CredentialKey { get; set; }
 
-        static CredentialProvider _instance;
+        static CredentialProvider _instance = null!;
         static object _instanceLock = new object();
         public static CredentialProvider Instance
         {

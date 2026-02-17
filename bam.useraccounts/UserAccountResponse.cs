@@ -9,13 +9,13 @@ namespace Bam.UserAccounts
         {
             get;
             set;
-        }
+        } = null!;
 
         public string Message
         {
             get;
             set;
-        }
+        } = null!;
 
         public bool Success
         {

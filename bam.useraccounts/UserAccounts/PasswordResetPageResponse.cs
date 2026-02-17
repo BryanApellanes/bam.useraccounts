@@ -8,7 +8,7 @@ namespace Bam.UserAccounts
     {
         public PasswordResetPageResponse() { }
 
-        public string Token { get; set; }
-        public string Layout { get; set; }
+        public string Token { get; set; } = null!;
+        public string Layout { get; set; } = null!;
     }
 }
