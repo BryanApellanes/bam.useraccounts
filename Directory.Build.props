@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <BamFrameworkRoot Condition="Exists('$(MSBuildThisFileDirectory)..\..\bamtk.sln')">$(MSBuildThisFileDirectory)..\</BamFrameworkRoot>
+    <BamFrameworkRoot Condition="!Exists('$(MSBuildThisFileDirectory)..\..\bamtk.sln')">$(MSBuildThisFileDirectory)submodules\</BamFrameworkRoot>
+  </PropertyGroup>
+</Project>
