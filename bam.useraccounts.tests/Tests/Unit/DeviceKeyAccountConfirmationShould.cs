@@ -1,8 +1,9 @@
 using Bam.DependencyInjection;
+using Bam.Encryption;
 using Bam.Protocol;
 using Bam.Protocol.Data;
 using Bam.Protocol.Data.Common;
-using Bam.Protocol.Profile;
+using Bam.Protocol.Data.Profile;
 using Bam.Test;
 using Bam.UserAccounts;
 using NSubstitute;
@@ -13,30 +14,51 @@ namespace Bam.UserAccounts.Tests.Unit;
 [UnitTestMenu("DeviceKeyAccountConfirmation Should", Selector = "dkac")]
 public class DeviceKeyAccountConfirmationShould : UnitTestMenuContainer
 {
+    private const string Handle = "person-abc";
+    private static readonly RsaPublicPrivateKeyPair KeyPair = new RsaPublicPrivateKeyPair();
+    private static readonly RsaPublicPrivateKeyPair WrongKeyPair = new RsaPublicPrivateKeyPair();
+
     public DeviceKeyAccountConfirmationShould(ServiceRegistry serviceRegistry) : base(serviceRegistry) { }
+
+    private static byte[] SignChallenge(ConfirmationChallenge challenge, RsaPublicPrivateKeyPair keyPair)
+    {
+        RsaPrivateKey privateKey = new RsaPrivateKey(keyPair.GetAsymmetricCipherKeyPair().Private);
+        return privateKey.Sign(challenge.ChallengeBytes).SignatureBytes;
+    }
 
     private static void SetupDefaults(TestCaseRegistry reg)
     {
-        var certificateManager = Substitute.For<ICertificateManager>();
-        var keyManager = Substitute.For<IKeyManager>();
-        var profileManager = Substitute.For<IProfileManager>();
+        SetupWith(reg, new InMemoryConfirmationChallengeRepository());
+    }
 
-        var mockProfile = Substitute.For<IProfile>();
-        mockProfile.PersonHandle.Returns("person-abc");
-        mockProfile.Name.Returns("Jane Doe");
+    private static void SetupWith(TestCaseRegistry reg, IConfirmationChallengeRepository challengeRepository)
+    {
+        ICertificateManager certificateManager = Substitute.For<ICertificateManager>();
+        IProfileRepository profileRepository = Substitute.For<IProfileRepository>();
 
-        profileManager.FindProfileByHandle("person-abc").Returns(mockProfile);
-        profileManager.FindProfileByPublicKey(Arg.Any<string>()).Returns(mockProfile);
+        profileRepository.FindPublicKeySetByHandle(Handle).Returns(new PublicKeySetData
+        {
+            KeySetHandle = Handle,
+            PublicRsaKey = KeyPair.PublicKeyPem
+        });
+        profileRepository.FindProfileByHandle(Handle).Returns(new ProfileData
+        {
+            PersonHandle = Handle,
+            Name = "Jane Doe"
+        });
 
-        var mockCert = Substitute.For<X509Certificate>();
+        X509Certificate mockCert = Substitute.For<X509Certificate>();
         certificateManager.CreateSignedCertificate(Arg.Any<IActor>()).Returns(mockCert);
 
         reg.For<ICertificateManager>().Use(certificateManager);
-        reg.For<IKeyManager>().Use(keyManager);
-        reg.For<IProfileManager>().Use(profileManager);
+        reg.For<IProfileRepository>().Use(profileRepository);
+        reg.For<IConfirmationChallengeRepository>().Use(challengeRepository);
 
         reg.For<IAccountConfirmation>().Use(new DeviceKeyAccountConfirmation(
-            certificateManager, keyManager, profileManager));
+            certificateManager,
+            profileRepository,
+            new RsaChallengeSignatureVerifier(new RsaSignatureProvider()),
+            challengeRepository));
     }
 
     [UnitTest]
@@ -45,20 +67,14 @@ public class DeviceKeyAccountConfirmationShould : UnitTestMenuContainer
         After.Setup(SetupDefaults)
         .When<IAccountConfirmation>("creates a challenge for a person", (confirmation) =>
         {
-            return confirmation.CreateChallenge("person-abc");
+            return confirmation.CreateChallenge(Handle);
         })
         .TheTest
-        .ShouldPass(because =>
+        .ShouldPass<ConfirmationChallenge>((because, _, challenge) =>
         {
-            because.TheObjectUnderTest
-                .IsNotNull()
-                .IsObjectOfType<DeviceKeyAccountConfirmation>();
-
-            because.TheResult
-                .IsNotNull()
-                .As<ConfirmationChallenge>("has correct person handle", c => c!.PersonHandle == "person-abc")
-                .As<ConfirmationChallenge>("has challenge bytes", c => c!.ChallengeBytes != null && c.ChallengeBytes.Length == 32)
-                .As<ConfirmationChallenge>("expires in the future", c => c!.ExpiresUtc > DateTime.UtcNow);
+            because.ItsTrue("has correct person handle", challenge.PersonHandle == Handle);
+            because.ItsTrue("has 32 challenge bytes", challenge.ChallengeBytes != null && challenge.ChallengeBytes.Length == 32);
+            because.ItsTrue("expires in the future", challenge.ExpiresUtc > DateTime.UtcNow);
         })
         .SoBeHappy()
         .UnlessItFailed();
@@ -70,19 +86,15 @@ public class DeviceKeyAccountConfirmationShould : UnitTestMenuContainer
         After.Setup(SetupDefaults)
         .When<IAccountConfirmation>("creates two challenges", (confirmation) =>
         {
-            var challenge1 = confirmation.CreateChallenge("person-abc");
-            var challenge2 = confirmation.CreateChallenge("person-abc");
-            return new { Challenge1 = challenge1, Challenge2 = challenge2 };
+            ConfirmationChallenge first = confirmation.CreateChallenge(Handle);
+            ConfirmationChallenge second = confirmation.CreateChallenge(Handle);
+            return new ChallengePairOutcome(first, second);
         })
         .TheTest
-        .ShouldPass(because =>
+        .ShouldPass<ChallengePairOutcome>((because, _, outcome) =>
         {
-            dynamic result = because.TheResult.As<dynamic>();
-            ConfirmationChallenge c1 = result.Challenge1;
-            ConfirmationChallenge c2 = result.Challenge2;
-
             because.ItsTrue("challenges have different bytes",
-                !c1.ChallengeBytes.SequenceEqual(c2.ChallengeBytes));
+                !outcome.First.ChallengeBytes.SequenceEqual(outcome.Second.ChallengeBytes));
         })
         .SoBeHappy()
         .UnlessItFailed();
@@ -94,42 +106,110 @@ public class DeviceKeyAccountConfirmationShould : UnitTestMenuContainer
         After.Setup(SetupDefaults)
         .When<IAccountConfirmation>("verifies without a pending challenge", (confirmation) =>
         {
-            return confirmation.VerifySignedChallenge("person-abc", new byte[] { 1, 2, 3 });
+            return confirmation.VerifySignedChallenge(Handle, new byte[] { 1, 2, 3 });
         })
         .TheTest
-        .ShouldPass(because =>
+        .ShouldPass<ConfirmationResult>((because, _, result) =>
         {
-            because.TheResult
-                .IsNotNull()
-                .As<ConfirmationResult>("is not confirmed", r => !r!.Confirmed)
-                .As<ConfirmationResult>("is not successful", r => !r!.Success)
-                .As<ConfirmationResult>("has message about no pending challenge", r => r!.Message.Contains("No pending challenge"));
+            because.ItsTrue("is not confirmed", !result.Confirmed);
+            because.ItsTrue("is not successful", !result.Success);
+            because.ItsTrue("has message about no pending challenge", result.Message.Contains("No pending challenge"));
         })
         .SoBeHappy()
         .UnlessItFailed();
     }
 
     [UnitTest]
-    public void IssueCertificateOnSuccessfulVerification()
+    public void ConfirmWithValidSignatureAndIssueCertificate()
     {
         After.Setup(SetupDefaults)
-        .When<IAccountConfirmation>("creates challenge then verifies", (confirmation) =>
+        .When<IAccountConfirmation>("verifies a correctly signed challenge", (confirmation) =>
         {
-            confirmation.CreateChallenge("person-abc");
-            return confirmation.VerifySignedChallenge("person-abc", new byte[] { 1, 2, 3 });
+            ConfirmationChallenge challenge = confirmation.CreateChallenge(Handle);
+            return confirmation.VerifySignedChallenge(Handle, SignChallenge(challenge, KeyPair));
         })
         .TheTest
-        .ShouldPass(because =>
+        .ShouldPass<ConfirmationResult>((because, _, result) =>
         {
-            because.TheResult
-                .IsNotNull()
-                .As<ConfirmationResult>("is confirmed", r => r!.Confirmed)
-                .As<ConfirmationResult>("is successful", r => r!.Success)
-                .As<ConfirmationResult>("has a certificate", r => r!.Certificate != null)
-                .As<ConfirmationResult>("has success message", r => r!.Message.Contains("confirmed"));
+            because.ItsTrue("is confirmed", result.Confirmed);
+            because.ItsTrue("is successful", result.Success);
+            because.ItsTrue("has a certificate", result.Certificate != null);
+            because.ItsTrue("has success message", result.Message.Contains("confirmed"));
 
-            var certManager = because.TestCaseRegistry.Get<ICertificateManager>();
-            certManager.Received(1).CreateSignedCertificate(Arg.Any<IActor>());
+            ICertificateManager certificateManager = because.TestCaseRegistry.Get<ICertificateManager>();
+            certificateManager.Received(1).CreateSignedCertificate(Arg.Any<IActor>());
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    [UnitTest]
+    public void RejectGarbageSignature()
+    {
+        After.Setup(SetupDefaults)
+        .When<IAccountConfirmation>("verifies garbage signature bytes", (confirmation) =>
+        {
+            confirmation.CreateChallenge(Handle);
+            return confirmation.VerifySignedChallenge(Handle, new byte[] { 1, 2, 3 });
+        })
+        .TheTest
+        .ShouldPass<ConfirmationResult>((because, _, result) =>
+        {
+            because.ItsTrue("is not confirmed", !result.Confirmed);
+            because.ItsTrue("is not successful", !result.Success);
+            because.ItsTrue("names the signature as the failure", result.Message.Contains("Signature invalid"));
+
+            ICertificateManager certificateManager = because.TestCaseRegistry.Get<ICertificateManager>();
+            certificateManager.DidNotReceive().CreateSignedCertificate(Arg.Any<IActor>());
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    [UnitTest]
+    public void RejectSignatureFromWrongKey()
+    {
+        After.Setup(SetupDefaults)
+        .When<IAccountConfirmation>("verifies a challenge signed with a different key", (confirmation) =>
+        {
+            ConfirmationChallenge challenge = confirmation.CreateChallenge(Handle);
+            return confirmation.VerifySignedChallenge(Handle, SignChallenge(challenge, WrongKeyPair));
+        })
+        .TheTest
+        .ShouldPass<ConfirmationResult>((because, _, result) =>
+        {
+            because.ItsTrue("is not confirmed", !result.Confirmed);
+            because.ItsTrue("names the signature as the failure", result.Message.Contains("Signature invalid"));
+
+            ICertificateManager certificateManager = because.TestCaseRegistry.Get<ICertificateManager>();
+            certificateManager.DidNotReceive().CreateSignedCertificate(Arg.Any<IActor>());
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    [UnitTest]
+    public void RejectExpiredChallenge()
+    {
+        InMemoryConfirmationChallengeRepository challengeRepository = new InMemoryConfirmationChallengeRepository();
+        ConfirmationChallenge expired = new ConfirmationChallenge
+        {
+            PersonHandle = Handle,
+            ChallengeBytes = new byte[] { 4, 5, 6, 7 },
+            ExpiresUtc = DateTime.UtcNow.AddMinutes(-1)
+        };
+        challengeRepository.Save(expired);
+
+        After.Setup(reg => SetupWith(reg, challengeRepository))
+        .When<IAccountConfirmation>("verifies an expired challenge with a valid signature", (confirmation) =>
+        {
+            return confirmation.VerifySignedChallenge(Handle, SignChallenge(expired, KeyPair));
+        })
+        .TheTest
+        .ShouldPass<ConfirmationResult>((because, _, result) =>
+        {
+            because.ItsTrue("is not confirmed", !result.Confirmed);
+            because.ItsTrue("has message about expiry", result.Message.Contains("expired"));
         })
         .SoBeHappy()
         .UnlessItFailed();
@@ -141,45 +221,98 @@ public class DeviceKeyAccountConfirmationShould : UnitTestMenuContainer
         After.Setup(SetupDefaults)
         .When<IAccountConfirmation>("verifies the same challenge twice", (confirmation) =>
         {
-            confirmation.CreateChallenge("person-abc");
-            confirmation.VerifySignedChallenge("person-abc", new byte[] { 1, 2, 3 });
-            return confirmation.VerifySignedChallenge("person-abc", new byte[] { 1, 2, 3 });
+            ConfirmationChallenge challenge = confirmation.CreateChallenge(Handle);
+            byte[] signedChallenge = SignChallenge(challenge, KeyPair);
+            ConfirmationResult first = confirmation.VerifySignedChallenge(Handle, signedChallenge);
+            ConfirmationResult second = confirmation.VerifySignedChallenge(Handle, signedChallenge);
+            return new VerificationPairOutcome(first, second);
         })
         .TheTest
-        .ShouldPass(because =>
+        .ShouldPass<VerificationPairOutcome>((because, _, outcome) =>
         {
-            because.TheResult
-                .IsNotNull()
-                .As<ConfirmationResult>("second verification fails", r => !r!.Confirmed)
-                .As<ConfirmationResult>("has message about no pending challenge", r => r!.Message.Contains("No pending challenge"));
+            because.ItsTrue("first verification is confirmed", outcome.First.Confirmed);
+            because.ItsTrue("second verification fails", !outcome.Second.Confirmed);
+            because.ItsTrue("second has message about no pending challenge", outcome.Second.Message.Contains("No pending challenge"));
         })
         .SoBeHappy()
         .UnlessItFailed();
     }
 
     [UnitTest]
-    public void FailVerificationForUnknownProfile()
+    public void ConsumeChallengeOnFailedVerification()
     {
-        After.Setup(reg =>
+        After.Setup(SetupDefaults)
+        .When<IAccountConfirmation>("retries with the correct signature after a garbage attempt", (confirmation) =>
         {
-            SetupDefaults(reg);
-            var profileManager = reg.Get<IProfileManager>();
-            profileManager.FindProfileByHandle("unknown-person").Returns((IProfile)null!);
-        })
-        .When<IAccountConfirmation>("verifies for unknown person", (confirmation) =>
-        {
-            confirmation.CreateChallenge("unknown-person");
-            return confirmation.VerifySignedChallenge("unknown-person", new byte[] { 1, 2, 3 });
+            ConfirmationChallenge challenge = confirmation.CreateChallenge(Handle);
+            byte[] validSignature = SignChallenge(challenge, KeyPair);
+            ConfirmationResult first = confirmation.VerifySignedChallenge(Handle, new byte[] { 1, 2, 3 });
+            ConfirmationResult second = confirmation.VerifySignedChallenge(Handle, validSignature);
+            return new VerificationPairOutcome(first, second);
         })
         .TheTest
-        .ShouldPass(because =>
+        .ShouldPass<VerificationPairOutcome>((because, _, outcome) =>
         {
-            because.TheResult
-                .IsNotNull()
-                .As<ConfirmationResult>("is not confirmed", r => !r!.Confirmed)
-                .As<ConfirmationResult>("has message about profile not found", r => r!.Message.Contains("Profile not found"));
+            because.ItsTrue("garbage attempt fails", !outcome.First.Confirmed);
+            because.ItsTrue("correct signature after failure also fails - challenge was consumed", !outcome.Second.Confirmed);
+            because.ItsTrue("second has message about no pending challenge", outcome.Second.Message.Contains("No pending challenge"));
         })
         .SoBeHappy()
         .UnlessItFailed();
     }
+
+    [UnitTest]
+    public void RejectWhenNoKeySetRegistered()
+    {
+        After.Setup(reg =>
+        {
+            SetupDefaults(reg);
+            IProfileRepository profileRepository = reg.Get<IProfileRepository>();
+            profileRepository.FindPublicKeySetByHandle("unknown-person").Returns((PublicKeySetData)null!);
+        })
+        .When<IAccountConfirmation>("verifies for a handle with no key set", (confirmation) =>
+        {
+            ConfirmationChallenge challenge = confirmation.CreateChallenge("unknown-person");
+            return confirmation.VerifySignedChallenge("unknown-person", SignChallenge(challenge, KeyPair));
+        })
+        .TheTest
+        .ShouldPass<ConfirmationResult>((because, _, result) =>
+        {
+            because.ItsTrue("is not confirmed", !result.Confirmed);
+            because.ItsTrue("has message about missing signing key", result.Message.Contains("No registered signing key"));
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    [UnitTest]
+    public void ConfirmWithHandleAsNameWhenProfileAbsent()
+    {
+        After.Setup(reg =>
+        {
+            SetupDefaults(reg);
+            IProfileRepository profileRepository = reg.Get<IProfileRepository>();
+            profileRepository.FindProfileByHandle(Handle).Returns((ProfileData)null!);
+            profileRepository.FindProfileByPersonHandle(Handle).Returns((ProfileData)null!);
+        })
+        .When<IAccountConfirmation>("verifies with a valid signature but no profile record", (confirmation) =>
+        {
+            ConfirmationChallenge challenge = confirmation.CreateChallenge(Handle);
+            return confirmation.VerifySignedChallenge(Handle, SignChallenge(challenge, KeyPair));
+        })
+        .TheTest
+        .ShouldPass<ConfirmationResult>((because, _, result) =>
+        {
+            because.ItsTrue("is confirmed - the key set is the identity anchor", result.Confirmed);
+
+            ICertificateManager certificateManager = because.TestCaseRegistry.Get<ICertificateManager>();
+            certificateManager.Received(1).CreateSignedCertificate(Arg.Is<IActor>(actor => actor.Name == Handle));
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    private sealed record ChallengePairOutcome(ConfirmationChallenge First, ConfirmationChallenge Second);
+
+    private sealed record VerificationPairOutcome(ConfirmationResult First, ConfirmationResult Second);
 }
