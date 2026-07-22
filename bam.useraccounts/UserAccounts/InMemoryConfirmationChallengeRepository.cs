@@ -4,6 +4,8 @@ namespace Bam.UserAccounts;
 /// Process-local <see cref="IConfirmationChallengeRepository"/> backed by an in-memory dictionary.
 /// Pending challenges do not survive a process restart and are not visible to other processes;
 /// use <see cref="PersistedConfirmationChallengeRepository"/> for server deployments.
+/// Register as a singleton — a transient binding yields a new, empty store on every resolution,
+/// so no challenge would ever be found at verification time.
 /// </summary>
 public class InMemoryConfirmationChallengeRepository : IConfirmationChallengeRepository
 {

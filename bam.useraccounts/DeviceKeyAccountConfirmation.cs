@@ -89,13 +89,13 @@ public class DeviceKeyAccountConfirmation : IAccountConfirmation
             RsaPublicKey signerPublicKey = new RsaPublicKey(publicKeySet.PublicRsaKey);
             verification = _signatureVerifier.Verify(challenge, signedChallenge, signerPublicKey);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             return new ConfirmationResult
             {
                 Confirmed = false,
                 Success = false,
-                Message = $"Signature verification failed: {ex.Message}"
+                Message = "Signature verification failed"
             };
         }
 

@@ -16,6 +16,12 @@ public static class UserAccountsServiceRegistration
     /// <c>ICertificateManager</c>.  An existing <see cref="ISignatureProvider"/> binding is
     /// respected; <see cref="RsaSignatureProvider"/> is bound only when none is present.
     /// </para>
+    /// <para>
+    /// The challenge repository and verifier are bound as singletons: challenge custody is
+    /// state that must be shared across resolutions — a transient binding would give every
+    /// resolution its own lock (and, for the in-memory implementation, its own empty store),
+    /// breaking the single-use invariant.
+    /// </para>
     /// </summary>
     public static ServiceRegistry AddDeviceKeyAccountConfirmation(this ServiceRegistry registry)
     {
@@ -25,8 +31,8 @@ public static class UserAccountsServiceRegistration
         }
 
         registry
-            .For<IChallengeSignatureVerifier>().Use<RsaChallengeSignatureVerifier>()
-            .For<IConfirmationChallengeRepository>().Use<PersistedConfirmationChallengeRepository>()
+            .For<IChallengeSignatureVerifier>().UseSingleton<RsaChallengeSignatureVerifier>()
+            .For<IConfirmationChallengeRepository>().UseSingleton<PersistedConfirmationChallengeRepository>()
             .For<IAccountConfirmation>().Use<DeviceKeyAccountConfirmation>();
 
         return registry;

@@ -6,6 +6,13 @@ namespace Bam.UserAccounts;
 /// Durable <see cref="IConfirmationChallengeRepository"/> backed by an <see cref="IRepository"/>,
 /// so pending challenges survive a process restart.  Maintains the one-pending-challenge-per-handle
 /// invariant by deleting any prior records for a handle on <see cref="Save"/>.
+/// <para>
+/// Single-use enforcement (<see cref="Take"/>) is query-then-delete under a process-local lock:
+/// atomic within one process, but two processes sharing the same backing store can race a
+/// concurrent Take.  Multi-process hosts need an atomic delete-returning storage operation to
+/// fully exclude a double-take.  Register as a singleton (see
+/// <c>UserAccountsServiceRegistration</c>) so custody state is shared within the process.
+/// </para>
 /// </summary>
 public class PersistedConfirmationChallengeRepository : IConfirmationChallengeRepository
 {

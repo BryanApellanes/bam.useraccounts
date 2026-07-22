@@ -15,10 +15,16 @@ public interface IConfirmationChallengeRepository
     void Save(ConfirmationChallenge challenge);
 
     /// <summary>
-    /// Atomically retrieves AND removes the pending challenge for the specified person handle.
+    /// Retrieves AND removes the pending challenge for the specified person handle.
     /// Returns null when no challenge is pending.  Because the challenge is removed before any
     /// verification occurs, a failed verification consumes the challenge and a new one must be
     /// created to retry.
+    /// <para>
+    /// Retrieve-and-remove is atomic within a single process (implementations synchronize under
+    /// a process-local lock).  When multiple processes share a durable store, excluding a
+    /// concurrent double-take additionally requires an atomic delete-returning operation in the
+    /// backing store — see <see cref="PersistedConfirmationChallengeRepository"/>.
+    /// </para>
     /// </summary>
     /// <param name="personHandle">The person handle whose pending challenge to take.</param>
     /// <returns>The pending challenge, or null if none exists.</returns>
