@@ -36,7 +36,7 @@ public class InMemoryConfirmationChallengeRepositoryShould : UnitTestMenuContain
             return new TakeTwiceOutcome(first, second);
         })
         .TheTest
-        .ShouldPass<TakeTwiceOutcome>((because, _, outcome) =>
+        .ShouldPass<TakeTwiceOutcome>((because, outcome) =>
         {
             because.ItsTrue("first take returns the challenge", outcome.First != null && outcome.First.ChallengeBytes.SequenceEqual(new byte[] { 1, 2, 3 }));
             because.ItsTrue("second take returns null - challenge was removed", outcome.Second == null);
@@ -56,7 +56,7 @@ public class InMemoryConfirmationChallengeRepositoryShould : UnitTestMenuContain
             return repository.Take("person-abc");
         })
         .TheTest
-        .ShouldPass<ConfirmationChallenge>((because, _, challenge) =>
+        .ShouldPass<ConfirmationChallenge>((because, challenge) =>
         {
             because.ItsTrue("the latest challenge wins", challenge.ChallengeBytes.SequenceEqual(new byte[] { 2, 2, 2 }));
         })
@@ -76,7 +76,7 @@ public class InMemoryConfirmationChallengeRepositoryShould : UnitTestMenuContain
             return new TakeTwiceOutcome(repository.Take("person-xyz"), repository.Take("person-abc"));
         })
         .TheTest
-        .ShouldPass<TakeTwiceOutcome>((because, _, outcome) =>
+        .ShouldPass<TakeTwiceOutcome>((because, outcome) =>
         {
             because.ItsTrue("the other handle's challenge is still pending", outcome.First != null && outcome.First.ChallengeBytes.SequenceEqual(new byte[] { 2, 2, 2 }));
             because.ItsTrue("the taken handle has nothing pending", outcome.Second == null);

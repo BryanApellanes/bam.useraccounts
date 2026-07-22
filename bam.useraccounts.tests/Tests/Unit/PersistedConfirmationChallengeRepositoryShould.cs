@@ -50,7 +50,7 @@ public class PersistedConfirmationChallengeRepositoryShould : UnitTestMenuContai
             return repository.Take("person-abc");
         })
         .TheTest
-        .ShouldPass<ConfirmationChallenge>((because, _, challenge) =>
+        .ShouldPass<ConfirmationChallenge>((because, challenge) =>
         {
             because.ItsTrue("person handle round-trips", challenge.PersonHandle == "person-abc");
             because.ItsTrue("challenge bytes round-trip through base64", challenge.ChallengeBytes.SequenceEqual(new byte[] { 9, 8, 7, 6 }));
@@ -71,7 +71,7 @@ public class PersistedConfirmationChallengeRepositoryShould : UnitTestMenuContai
             return new SecondTakeOutcome(repository.Take("person-abc"));
         })
         .TheTest
-        .ShouldPass<SecondTakeOutcome>((because, _, outcome) =>
+        .ShouldPass<SecondTakeOutcome>((because, outcome) =>
         {
             because.ItsTrue("second take returns null - the record was deleted", outcome.Second == null);
 
@@ -94,7 +94,7 @@ public class PersistedConfirmationChallengeRepositoryShould : UnitTestMenuContai
             return new ReplaceOutcome(taken, repository.Take("person-abc"));
         })
         .TheTest
-        .ShouldPass<ReplaceOutcome>((because, _, outcome) =>
+        .ShouldPass<ReplaceOutcome>((because, outcome) =>
         {
             because.ItsTrue("the latest challenge wins", outcome.Taken != null && outcome.Taken.ChallengeBytes.SequenceEqual(new byte[] { 2, 2, 2 }));
             because.ItsTrue("only one record was pending", outcome.SecondTake == null);

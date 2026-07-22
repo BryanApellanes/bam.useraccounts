@@ -70,7 +70,7 @@ public class DeviceKeyAccountConfirmationShould : UnitTestMenuContainer
             return confirmation.CreateChallenge(Handle);
         })
         .TheTest
-        .ShouldPass<ConfirmationChallenge>((because, _, challenge) =>
+        .ShouldPass<ConfirmationChallenge>((because, challenge) =>
         {
             because.ItsTrue("has correct person handle", challenge.PersonHandle == Handle);
             because.ItsTrue("has 32 challenge bytes", challenge.ChallengeBytes != null && challenge.ChallengeBytes.Length == 32);
@@ -91,7 +91,7 @@ public class DeviceKeyAccountConfirmationShould : UnitTestMenuContainer
             return new ChallengePairOutcome(first, second);
         })
         .TheTest
-        .ShouldPass<ChallengePairOutcome>((because, _, outcome) =>
+        .ShouldPass<ChallengePairOutcome>((because, outcome) =>
         {
             because.ItsTrue("challenges have different bytes",
                 !outcome.First.ChallengeBytes.SequenceEqual(outcome.Second.ChallengeBytes));
@@ -109,7 +109,7 @@ public class DeviceKeyAccountConfirmationShould : UnitTestMenuContainer
             return confirmation.VerifySignedChallenge(Handle, new byte[] { 1, 2, 3 });
         })
         .TheTest
-        .ShouldPass<ConfirmationResult>((because, _, result) =>
+        .ShouldPass<ConfirmationResult>((because, result) =>
         {
             because.ItsTrue("is not confirmed", !result.Confirmed);
             because.ItsTrue("is not successful", !result.Success);
@@ -129,7 +129,7 @@ public class DeviceKeyAccountConfirmationShould : UnitTestMenuContainer
             return confirmation.VerifySignedChallenge(Handle, SignChallenge(challenge, KeyPair));
         })
         .TheTest
-        .ShouldPass<ConfirmationResult>((because, _, result) =>
+        .ShouldPass<ConfirmationResult>((because, result) =>
         {
             because.ItsTrue("is confirmed", result.Confirmed);
             because.ItsTrue("is successful", result.Success);
@@ -153,7 +153,7 @@ public class DeviceKeyAccountConfirmationShould : UnitTestMenuContainer
             return confirmation.VerifySignedChallenge(Handle, new byte[] { 1, 2, 3 });
         })
         .TheTest
-        .ShouldPass<ConfirmationResult>((because, _, result) =>
+        .ShouldPass<ConfirmationResult>((because, result) =>
         {
             because.ItsTrue("is not confirmed", !result.Confirmed);
             because.ItsTrue("is not successful", !result.Success);
@@ -176,7 +176,7 @@ public class DeviceKeyAccountConfirmationShould : UnitTestMenuContainer
             return confirmation.VerifySignedChallenge(Handle, SignChallenge(challenge, WrongKeyPair));
         })
         .TheTest
-        .ShouldPass<ConfirmationResult>((because, _, result) =>
+        .ShouldPass<ConfirmationResult>((because, result) =>
         {
             because.ItsTrue("is not confirmed", !result.Confirmed);
             because.ItsTrue("names the signature as the failure", result.Message.Contains("Signature invalid"));
@@ -206,7 +206,7 @@ public class DeviceKeyAccountConfirmationShould : UnitTestMenuContainer
             return confirmation.VerifySignedChallenge(Handle, SignChallenge(expired, KeyPair));
         })
         .TheTest
-        .ShouldPass<ConfirmationResult>((because, _, result) =>
+        .ShouldPass<ConfirmationResult>((because, result) =>
         {
             because.ItsTrue("is not confirmed", !result.Confirmed);
             because.ItsTrue("has message about expiry", result.Message.Contains("expired"));
@@ -228,7 +228,7 @@ public class DeviceKeyAccountConfirmationShould : UnitTestMenuContainer
             return new VerificationPairOutcome(first, second);
         })
         .TheTest
-        .ShouldPass<VerificationPairOutcome>((because, _, outcome) =>
+        .ShouldPass<VerificationPairOutcome>((because, outcome) =>
         {
             because.ItsTrue("first verification is confirmed", outcome.First.Confirmed);
             because.ItsTrue("second verification fails", !outcome.Second.Confirmed);
@@ -251,7 +251,7 @@ public class DeviceKeyAccountConfirmationShould : UnitTestMenuContainer
             return new VerificationPairOutcome(first, second);
         })
         .TheTest
-        .ShouldPass<VerificationPairOutcome>((because, _, outcome) =>
+        .ShouldPass<VerificationPairOutcome>((because, outcome) =>
         {
             because.ItsTrue("garbage attempt fails", !outcome.First.Confirmed);
             because.ItsTrue("correct signature after failure also fails - challenge was consumed", !outcome.Second.Confirmed);
@@ -276,7 +276,7 @@ public class DeviceKeyAccountConfirmationShould : UnitTestMenuContainer
             return confirmation.VerifySignedChallenge("unknown-person", SignChallenge(challenge, KeyPair));
         })
         .TheTest
-        .ShouldPass<ConfirmationResult>((because, _, result) =>
+        .ShouldPass<ConfirmationResult>((because, result) =>
         {
             because.ItsTrue("is not confirmed", !result.Confirmed);
             because.ItsTrue("has message about missing signing key", result.Message.Contains("No registered signing key"));
@@ -301,7 +301,7 @@ public class DeviceKeyAccountConfirmationShould : UnitTestMenuContainer
             return confirmation.VerifySignedChallenge(Handle, SignChallenge(challenge, KeyPair));
         })
         .TheTest
-        .ShouldPass<ConfirmationResult>((because, _, result) =>
+        .ShouldPass<ConfirmationResult>((because, result) =>
         {
             because.ItsTrue("is confirmed - the key set is the identity anchor", result.Confirmed);
 

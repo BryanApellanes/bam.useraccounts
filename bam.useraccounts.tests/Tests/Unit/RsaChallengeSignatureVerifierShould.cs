@@ -44,7 +44,7 @@ public class RsaChallengeSignatureVerifierShould : UnitTestMenuContainer
             return verifier.Verify(challenge, Sign(challenge, KeyPair), KeyPair.GetRsaPublicKey());
         })
         .TheTest
-        .ShouldPass<ISignatureVerification>((because, _, verification) =>
+        .ShouldPass<ISignatureVerification>((because, verification) =>
         {
             because.ItsTrue("verification succeeds", verification.Success);
         })
@@ -62,7 +62,7 @@ public class RsaChallengeSignatureVerifierShould : UnitTestMenuContainer
             return verifier.Verify(challenge, Sign(challenge, WrongKeyPair), KeyPair.GetRsaPublicKey());
         })
         .TheTest
-        .ShouldPass<ISignatureVerification>((because, _, verification) =>
+        .ShouldPass<ISignatureVerification>((because, verification) =>
         {
             because.ItsTrue("verification fails", !verification.Success);
         })
@@ -79,7 +79,7 @@ public class RsaChallengeSignatureVerifierShould : UnitTestMenuContainer
             return verifier.Verify(NewChallenge(), new byte[] { 1, 2, 3 }, KeyPair.GetRsaPublicKey());
         })
         .TheTest
-        .ShouldPass<ISignatureVerification>((because, _, verification) =>
+        .ShouldPass<ISignatureVerification>((because, verification) =>
         {
             because.ItsTrue("verification fails", !verification.Success);
         })
@@ -103,7 +103,7 @@ public class RsaChallengeSignatureVerifierShould : UnitTestMenuContainer
             return verifier.Verify(presentedChallenge, Sign(signedChallenge, KeyPair), KeyPair.GetRsaPublicKey());
         })
         .TheTest
-        .ShouldPass<ISignatureVerification>((because, _, verification) =>
+        .ShouldPass<ISignatureVerification>((because, verification) =>
         {
             because.ItsTrue("verification fails - the signature does not cover the presented challenge", !verification.Success);
         })
