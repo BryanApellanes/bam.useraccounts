@@ -157,7 +157,7 @@ public class DeviceKeyAccountConfirmationShould : UnitTestMenuContainer
         {
             because.ItsTrue("is not confirmed", !result.Confirmed);
             because.ItsTrue("is not successful", !result.Success);
-            because.ItsTrue("names the signature as the failure", result.Message.Contains("Signature invalid"));
+            because.ItsTrue("fails with the generic verification message", result.Message == DeviceKeyAccountConfirmation.VerificationFailedMessage);
 
             ICertificateManager certificateManager = because.TestCaseRegistry.Get<ICertificateManager>();
             certificateManager.DidNotReceive().CreateSignedCertificate(Arg.Any<IActor>());
@@ -179,7 +179,7 @@ public class DeviceKeyAccountConfirmationShould : UnitTestMenuContainer
         .ShouldPass<ConfirmationResult>((because, result) =>
         {
             because.ItsTrue("is not confirmed", !result.Confirmed);
-            because.ItsTrue("names the signature as the failure", result.Message.Contains("Signature invalid"));
+            because.ItsTrue("fails with the generic verification message", result.Message == DeviceKeyAccountConfirmation.VerificationFailedMessage);
 
             ICertificateManager certificateManager = because.TestCaseRegistry.Get<ICertificateManager>();
             certificateManager.DidNotReceive().CreateSignedCertificate(Arg.Any<IActor>());
@@ -279,7 +279,7 @@ public class DeviceKeyAccountConfirmationShould : UnitTestMenuContainer
         .ShouldPass<ConfirmationResult>((because, result) =>
         {
             because.ItsTrue("is not confirmed", !result.Confirmed);
-            because.ItsTrue("has message about missing signing key", result.Message.Contains("No registered signing key"));
+            because.ItsTrue("fails with the generic verification message - does not reveal key-registration state", result.Message == DeviceKeyAccountConfirmation.VerificationFailedMessage);
         })
         .SoBeHappy()
         .UnlessItFailed();
@@ -307,6 +307,33 @@ public class DeviceKeyAccountConfirmationShould : UnitTestMenuContainer
 
             ICertificateManager certificateManager = because.TestCaseRegistry.Get<ICertificateManager>();
             certificateManager.Received(1).CreateSignedCertificate(Arg.Is<IActor>(actor => actor.Name == Handle));
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    [UnitTest]
+    public void NotDistinguishMissingKeySetFromBadSignature()
+    {
+        After.Setup(reg =>
+        {
+            SetupDefaults(reg);
+            IProfileRepository profileRepository = reg.Get<IProfileRepository>();
+            profileRepository.FindPublicKeySetByHandle("no-keyset-person").Returns((PublicKeySetData)null!);
+        })
+        .When<IAccountConfirmation>("fails verification for a missing key set and for a bad signature", (confirmation) =>
+        {
+            confirmation.CreateChallenge("no-keyset-person");
+            ConfirmationResult missingKeySet = confirmation.VerifySignedChallenge("no-keyset-person", new byte[] { 1, 2, 3 });
+            confirmation.CreateChallenge(Handle);
+            ConfirmationResult badSignature = confirmation.VerifySignedChallenge(Handle, new byte[] { 1, 2, 3 });
+            return new VerificationPairOutcome(missingKeySet, badSignature);
+        })
+        .TheTest
+        .ShouldPass<VerificationPairOutcome>((because, outcome) =>
+        {
+            because.ItsTrue("the two failure messages are identical - no handle-registration oracle",
+                outcome.First.Message == outcome.Second.Message);
         })
         .SoBeHappy()
         .UnlessItFailed();

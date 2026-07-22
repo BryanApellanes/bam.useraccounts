@@ -28,6 +28,13 @@ public interface IAccountConfirmation
     /// The pending challenge is single-use: it is consumed by this call regardless of outcome, so
     /// a failed verification requires a new challenge to retry.
     /// </para>
+    /// <para>
+    /// Trust assumption: verification proves possession of the private key matching the public
+    /// key set REGISTERED under the handle — it is only as strong as the custody of key-set
+    /// registration itself (who may save or replace a <c>PublicKeySetData</c> for a handle).
+    /// Registration custody is the host's responsibility; hardening it framework-side is
+    /// tracked as BryanApellanes/bam.protocol#8.
+    /// </para>
     /// </summary>
     /// <param name="personHandle">The handle whose pending challenge is being answered.</param>
     /// <param name="signedChallenge">The raw signature bytes over the challenge.</param>

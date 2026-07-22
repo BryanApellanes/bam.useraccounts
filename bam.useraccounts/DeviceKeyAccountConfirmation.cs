@@ -15,6 +15,15 @@ namespace Bam.UserAccounts;
 /// </summary>
 public class DeviceKeyAccountConfirmation : IAccountConfirmation
 {
+    /// <summary>
+    /// The single failure message returned for every verification-stage failure (missing key
+    /// set, malformed key material, or invalid signature).  Deliberately generic: distinct
+    /// messages would let an unauthenticated caller probe whether a handle has a registered
+    /// signing key.  The expected signing convention is documented on
+    /// <see cref="IAccountConfirmation.VerifySignedChallenge(string, byte[])"/>.
+    /// </summary>
+    public const string VerificationFailedMessage = "Signature verification failed";
+
     private readonly ICertificateManager _certificateManager;
     private readonly IProfileRepository _profileRepository;
     private readonly IChallengeSignatureVerifier _signatureVerifier;
@@ -79,7 +88,7 @@ public class DeviceKeyAccountConfirmation : IAccountConfirmation
             {
                 Confirmed = false,
                 Success = false,
-                Message = "No registered signing key for this handle"
+                Message = VerificationFailedMessage
             };
         }
 
@@ -95,7 +104,7 @@ public class DeviceKeyAccountConfirmation : IAccountConfirmation
             {
                 Confirmed = false,
                 Success = false,
-                Message = "Signature verification failed"
+                Message = VerificationFailedMessage
             };
         }
 
@@ -105,7 +114,7 @@ public class DeviceKeyAccountConfirmation : IAccountConfirmation
             {
                 Confirmed = false,
                 Success = false,
-                Message = $"Signature invalid: expected {RsaChallengeSignatureVerifier.Algorithm} over the base64 form of the challenge bytes ({verification.Message})"
+                Message = VerificationFailedMessage
             };
         }
 
