@@ -13,6 +13,13 @@ namespace Bam.UserAccounts;
 /// fully exclude a double-take.  Register as a singleton (see
 /// <c>UserAccountsServiceRegistration</c>) so custody state is shared within the process.
 /// </para>
+/// <para>
+/// Known limitation: abandoned challenges accumulate (one per handle, but handles are
+/// unbounded) and <see cref="IRepository"/> predicate queries scan the full record set, so
+/// unauthenticated challenge creation can grow storage and slow Save/Take over time.
+/// Tracked, together with the atomic delete-returning Take, as
+/// BryanApellanes/bam.useraccounts#3.
+/// </para>
 /// </summary>
 public class PersistedConfirmationChallengeRepository : IConfirmationChallengeRepository
 {
