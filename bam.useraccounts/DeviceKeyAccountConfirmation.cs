@@ -1,64 +1,74 @@
 using System.Security.Cryptography;
+using Bam.Encryption;
 using Bam.Protocol;
 using Bam.Protocol.Data;
-using Bam.Protocol.Profile;
+using Bam.Protocol.Data.Common;
+using Bam.Protocol.Data.Profile;
+using Org.BouncyCastle.X509;
 
 namespace Bam.UserAccounts;
 
+/// <summary>
+/// Confirms account ownership by proof of key possession: a caller is confirmed only by presenting
+/// a valid signature, made with the private key matching the public key set registered under their
+/// handle, over the challenge nonce previously issued for that handle.
+/// </summary>
 public class DeviceKeyAccountConfirmation : IAccountConfirmation
 {
+    /// <summary>
+    /// The single failure message returned for every verification-stage failure (missing key
+    /// set, malformed key material, or invalid signature).  Deliberately generic: distinct
+    /// messages would let an unauthenticated caller probe whether a handle has a registered
+    /// signing key.  The expected signing convention is documented on
+    /// <see cref="IAccountConfirmation.VerifySignedChallenge(string, byte[])"/>.
+    /// </summary>
+    public const string VerificationFailedMessage = "Signature verification failed";
+
     private readonly ICertificateManager _certificateManager;
-    private readonly IKeyManager _keyManager;
-    private readonly IProfileManager _profileManager;
-    private readonly Dictionary<string, ConfirmationChallenge> _pendingChallenges = new();
-    private readonly object _lock = new();
+    private readonly IProfileRepository _profileRepository;
+    private readonly IChallengeSignatureVerifier _signatureVerifier;
+    private readonly IConfirmationChallengeRepository _challengeRepository;
 
     public DeviceKeyAccountConfirmation(
         ICertificateManager certificateManager,
-        IKeyManager keyManager,
-        IProfileManager profileManager)
+        IProfileRepository profileRepository,
+        IChallengeSignatureVerifier signatureVerifier,
+        IConfirmationChallengeRepository challengeRepository)
     {
         _certificateManager = certificateManager;
-        _keyManager = keyManager;
-        _profileManager = profileManager;
+        _profileRepository = profileRepository;
+        _signatureVerifier = signatureVerifier;
+        _challengeRepository = challengeRepository;
     }
 
     public ConfirmationChallenge CreateChallenge(string personHandle)
     {
-        var challengeBytes = new byte[32];
+        byte[] challengeBytes = new byte[32];
         RandomNumberGenerator.Fill(challengeBytes);
 
-        var challenge = new ConfirmationChallenge
+        ConfirmationChallenge challenge = new ConfirmationChallenge
         {
             PersonHandle = personHandle,
             ChallengeBytes = challengeBytes,
             ExpiresUtc = DateTime.UtcNow.AddMinutes(10)
         };
 
-        lock (_lock)
-        {
-            _pendingChallenges[personHandle] = challenge;
-        }
+        _challengeRepository.Save(challenge);
 
         return challenge;
     }
 
     public ConfirmationResult VerifySignedChallenge(string personHandle, byte[] signedChallenge)
     {
-        ConfirmationChallenge? challenge;
-        lock (_lock)
+        ConfirmationChallenge? challenge = _challengeRepository.Take(personHandle);
+        if (challenge == null)
         {
-            if (!_pendingChallenges.TryGetValue(personHandle, out challenge))
+            return new ConfirmationResult
             {
-                return new ConfirmationResult
-                {
-                    Confirmed = false,
-                    Success = false,
-                    Message = "No pending challenge for this handle"
-                };
-            }
-
-            _pendingChallenges.Remove(personHandle);
+                Confirmed = false,
+                Success = false,
+                Message = "No pending challenge for this handle"
+            };
         }
 
         if (DateTime.UtcNow > challenge.ExpiresUtc)
@@ -71,35 +81,50 @@ public class DeviceKeyAccountConfirmation : IAccountConfirmation
             };
         }
 
-        var profile = _profileManager.FindProfileByHandle(personHandle);
-        if (profile == null)
+        PublicKeySetData publicKeySet = _profileRepository.FindPublicKeySetByHandle(personHandle);
+        if (publicKeySet == null || string.IsNullOrEmpty(publicKeySet.PublicRsaKey))
         {
             return new ConfirmationResult
             {
                 Confirmed = false,
                 Success = false,
-                Message = "Profile not found"
+                Message = VerificationFailedMessage
             };
         }
 
-        var publicKey = _profileManager.FindProfileByPublicKey(profile.PersonHandle);
-        if (publicKey == null)
+        ISignatureVerification verification;
+        try
+        {
+            RsaPublicKey signerPublicKey = new RsaPublicKey(publicKeySet.PublicRsaKey);
+            verification = _signatureVerifier.Verify(challenge, signedChallenge, signerPublicKey);
+        }
+        catch (Exception)
         {
             return new ConfirmationResult
             {
                 Confirmed = false,
                 Success = false,
-                Message = "Public key not found for profile"
+                Message = VerificationFailedMessage
             };
         }
 
-        var person = new Bam.Protocol.Data.Common.ActorData
+        if (!verification.Success)
+        {
+            return new ConfirmationResult
+            {
+                Confirmed = false,
+                Success = false,
+                Message = VerificationFailedMessage
+            };
+        }
+
+        ActorData person = new ActorData
         {
             Handle = personHandle,
-            Name = profile.Name
+            Name = ResolveActorName(personHandle)
         };
 
-        var certificate = _certificateManager.CreateSignedCertificate(person);
+        X509Certificate certificate = _certificateManager.CreateSignedCertificate(person);
 
         return new ConfirmationResult
         {
@@ -108,5 +133,16 @@ public class DeviceKeyAccountConfirmation : IAccountConfirmation
             Certificate = certificate,
             Message = "Account confirmed via device key"
         };
+    }
+
+    private string ResolveActorName(string personHandle)
+    {
+        ProfileData profile = _profileRepository.FindProfileByHandle(personHandle)
+            ?? _profileRepository.FindProfileByPersonHandle(personHandle);
+        if (profile == null || string.IsNullOrEmpty(profile.Name))
+        {
+            return personHandle;
+        }
+        return profile.Name;
     }
 }
