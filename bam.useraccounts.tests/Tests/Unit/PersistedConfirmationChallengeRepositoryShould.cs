@@ -35,10 +35,11 @@ public class PersistedConfirmationChallengeRepositoryShould : UnitTestMenuContai
     private static IRepository CreateBackingRepository(List<ConfirmationChallengeData> store)
     {
         IRepository backingRepository = Substitute.For<IRepository>();
-        // The predicate overload retrieves the full record set on real backends; the hardened
-        // repository must never use it, so calling it fails the test outright.
+        // The predicate overload applies the ACTUAL production predicate to the store list — the
+        // same in-memory evaluation every real backend performs for this overload — so the reap
+        // sweep's semantics are exercised for real rather than re-implemented in the mock.
         backingRepository.Query(Arg.Any<Func<ConfirmationChallengeData, bool>>())
-            .Returns(callInfo => throw new InvalidOperationException("full-table predicate scan was used"));
+            .Returns(callInfo => store.Where(callInfo.Arg<Func<ConfirmationChallengeData, bool>>()).ToList());
         backingRepository.Query<ConfirmationChallengeData>(Arg.Any<Dictionary<string, object>>())
             .Returns(callInfo =>
             {
@@ -54,8 +55,6 @@ public class PersistedConfirmationChallengeRepositoryShould : UnitTestMenuContai
             });
         backingRepository.Delete(Arg.Any<ConfirmationChallengeData>())
             .Returns(callInfo => store.Remove(callInfo.Arg<ConfirmationChallengeData>()));
-        backingRepository.DeleteWhere<ConfirmationChallengeData>(Arg.Any<object>())
-            .Returns(callInfo => store.RemoveAll(pending => pending.ExpiresUtc < DateTime.UtcNow) > 0);
         return backingRepository;
     }
 
@@ -154,8 +153,9 @@ public class PersistedConfirmationChallengeRepositoryShould : UnitTestMenuContai
     public void NotScanTheChallengeTableOnSaveOrTake()
     {
         After.Setup(SetupDefaults)
-        .When<IConfirmationChallengeRepository>("runs a full save/take cycle", (repository) =>
+        .When<IConfirmationChallengeRepository>("runs a full save/take cycle inside one reap interval", (repository) =>
         {
+            ((PersistedConfirmationChallengeRepository)repository).ReapInterval = TimeSpan.FromHours(1);
             repository.Save(NewChallenge("person-abc", new byte[] { 4, 5, 6 }));
             return new ScanOutcome(repository.Take("person-abc"), repository.Take("person-missing"));
         })
@@ -165,8 +165,10 @@ public class PersistedConfirmationChallengeRepositoryShould : UnitTestMenuContai
             because.ItsTrue("the pending challenge was still taken", outcome.Taken != null);
             because.ItsTrue("a missing handle yields null", outcome.Missing == null);
 
+            // Per-operation lookups are keyed; the predicate overload is reached exactly once —
+            // the single throttled reap sweep on the first operation — never per lookup.
             IRepository backingRepository = because.TestCaseRegistry.Get<IRepository>();
-            backingRepository.DidNotReceive().Query(Arg.Any<Func<ConfirmationChallengeData, bool>>());
+            backingRepository.Received(1).Query(Arg.Any<Func<ConfirmationChallengeData, bool>>());
             backingRepository.Received().Query<ConfirmationChallengeData>(Arg.Any<Dictionary<string, object>>());
         })
         .SoBeHappy()
@@ -214,7 +216,66 @@ public class PersistedConfirmationChallengeRepositoryShould : UnitTestMenuContai
         .ShouldPass<IConfirmationChallengeRepository>((because, repository) =>
         {
             IRepository backingRepository = because.TestCaseRegistry.Get<IRepository>();
-            backingRepository.Received(1).DeleteWhere<ConfirmationChallengeData>(Arg.Any<object>());
+            backingRepository.Received(1).Query(Arg.Any<Func<ConfirmationChallengeData, bool>>());
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    [UnitTest]
+    public void RetryTheReapWhenTheStoreSweepFails()
+    {
+        After.Setup(SetupDefaults)
+        .When<IConfirmationChallengeRepository>("reaps again within the interval after a store fault", (repository, reg) =>
+        {
+            List<ConfirmationChallengeData> store = reg.Get<List<ConfirmationChallengeData>>();
+            store.Add(NewChallengeData("person-expired", DateTime.UtcNow.AddMinutes(-30)));
+
+            IRepository backingRepository = reg.Get<IRepository>();
+            backingRepository.Query(Arg.Any<Func<ConfirmationChallengeData, bool>>())
+                .Returns(
+                    callInfo => throw new InvalidOperationException("store fault"),
+                    callInfo => store.Where(callInfo.Arg<Func<ConfirmationChallengeData, bool>>()).ToList());
+
+            ((PersistedConfirmationChallengeRepository)repository).ReapInterval = TimeSpan.FromHours(1);
+            repository.Save(NewChallenge("person-abc", new byte[] { 1, 2, 3 }));
+            repository.Save(NewChallenge("person-def", new byte[] { 4, 5, 6 }));
+
+            return new ReapRetryOutcome(store.Any(pending => pending.PersonHandle == "person-expired"));
+        })
+        .TheTest
+        .ShouldPass<ReapRetryOutcome>((because, outcome) =>
+        {
+            because.ItsTrue("the expired challenge was reaped by the retry", !outcome.ExpiredRemains);
+
+            // The faulted sweep must not advance the throttle timestamp: the second operation,
+            // though inside the interval, retries the sweep - two predicate calls total.
+            IRepository backingRepository = because.TestCaseRegistry.Get<IRepository>();
+            backingRepository.Received(2).Query(Arg.Any<Func<ConfirmationChallengeData, bool>>());
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    [UnitTest]
+    public void FallBackToTheStoreWhenACachedClaimIsStale()
+    {
+        After.Setup(SetupDefaults)
+        .When<IConfirmationChallengeRepository>("takes after the cached row's first claim fails", (repository, reg) =>
+        {
+            repository.Save(NewChallenge("person-abc", new byte[] { 3, 3, 3 }));
+
+            // First claim reports no row removed (as if another process raced the delete) while
+            // the store still holds the record; the fallback re-query must claim it and succeed.
+            IRepository backingRepository = reg.Get<IRepository>();
+            backingRepository.Delete(Arg.Any<ConfirmationChallengeData>()).Returns(false, true);
+
+            return new StaleClaimOutcome(repository.Take("person-abc"));
+        })
+        .TheTest
+        .ShouldPass<StaleClaimOutcome>((because, outcome) =>
+        {
+            because.ItsTrue("the fallback re-query claims the genuinely pending challenge", outcome.Taken != null && outcome.Taken.ChallengeBytes.SequenceEqual(new byte[] { 3, 3, 3 }));
         })
         .SoBeHappy()
         .UnlessItFailed();
@@ -295,6 +356,10 @@ public class PersistedConfirmationChallengeRepositoryShould : UnitTestMenuContai
     private sealed record CacheHitOutcome(ConfirmationChallenge? Taken);
 
     private sealed record CacheCapOutcome(ConfirmationChallenge? UncachedTaken, ConfirmationChallenge? CachedTaken);
+
+    private sealed record ReapRetryOutcome(bool ExpiredRemains);
+
+    private sealed record StaleClaimOutcome(ConfirmationChallenge? Taken);
 
     private sealed record ClaimLostOutcome(ConfirmationChallenge? Taken);
 }

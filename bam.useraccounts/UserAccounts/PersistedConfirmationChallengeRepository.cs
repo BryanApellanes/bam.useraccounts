@@ -1,4 +1,3 @@
-using Bam.Data;
 using Bam.Data.Repositories;
 
 namespace Bam.UserAccounts;
@@ -8,28 +7,37 @@ namespace Bam.UserAccounts;
 /// so pending challenges survive a process restart.  Maintains the one-pending-challenge-per-handle
 /// invariant by deleting any prior records for a handle on <see cref="Save"/>.
 /// <para>
-/// Hardening (BryanApellanes/bam.useraccounts#3): all store lookups use keyed query overloads
-/// (<see cref="IRepository.Query{T}(Dictionary{string, object})"/>) rather than predicate scans, so
-/// backends that translate keyed queries (e.g. <c>DaoRepository</c>) never retrieve the full
-/// challenge table; expired challenges are reaped opportunistically (throttled by
-/// <see cref="ReapInterval"/>) so abandoned challenges do not accumulate; and a bounded in-process
-/// write-through cache (capped at <see cref="MaxCachedChallenges"/>) serves handle lookups without
-/// a store query, with the durable store remaining authoritative.  Note:
-/// <c>ObjectDataRepository</c> currently services keyed queries by full scan — tracked as
-/// BryanApellanes/bam.data.objects#2.  The cache is a plain bounded dictionary rather than
-/// <c>Bam.Caching</c> because that submodule is not currently fit for keyed write-through caching —
-/// tracked as BryanApellanes/bam.caching#1; migrate when it lands.
+/// Hardening (BryanApellanes/bam.useraccounts#3): per-operation store lookups use keyed query
+/// overloads (<see cref="IRepository.Query{T}(Dictionary{string, object})"/>) rather than predicate
+/// scans, so backends that translate keyed queries (e.g. <c>DaoRepository</c>) never retrieve the
+/// full challenge table on a lookup; expired challenges are reaped opportunistically by a
+/// backend-agnostic sweep — at most once per <see cref="ReapInterval"/> the reap retrieves pending
+/// records via the predicate query overload and deletes rows whose <c>ExpiresUtc</c> has passed,
+/// filtering in memory so the sweep removes rows correctly even on backends that evaluate filter
+/// operators as equality (e.g. <c>ObjectDataRepository</c> — see BryanApellanes/bam.data.objects#2;
+/// a store-side filtered delete is the intended optimization once operator-correct filter
+/// evaluation lands there).  Reap cost is O(table) at most once per interval, and the table stays
+/// bounded to the unexpired window once reaping converges.  A bounded in-process write-through
+/// cache (capped at <see cref="MaxCachedChallenges"/>) serves handle lookups without a store
+/// query, with the durable store remaining authoritative.  Note: <c>ObjectDataRepository</c> also
+/// services keyed queries by full scan — tracked as BryanApellanes/bam.data.objects#2.  The cache
+/// is a plain bounded dictionary rather than <c>Bam.Caching</c> because that submodule is not
+/// currently fit for keyed write-through caching — tracked as BryanApellanes/bam.caching#1;
+/// migrate when it lands.
 /// </para>
 /// <para>
 /// Single-use enforcement (<see cref="Take"/>) claims the pending record by presenting it for
 /// delete and honoring the store's report of whether a row was actually removed: within one
 /// process the claim is serialized under a process-local lock, and a claim whose delete reports
-/// no row removed yields null.  Because <see cref="IRepository"/> deletes are fetch-then-delete
-/// rather than atomic, two processes sharing the same backing store can still race a concurrent
-/// Take in the window between fetch and delete.  Fully excluding a cross-process double-take
-/// requires an atomic delete-returning storage operation, tracked as
-/// BryanApellanes/threeheadz-tracker#24.  Register as a singleton (see
-/// <c>UserAccountsServiceRegistration</c>) so custody state is shared within the process.
+/// no row removed yields null.  That report is only meaningful on backends that truthfully report
+/// delete outcomes (currently <c>DaoRepository</c>); <c>ObjectDataRepository</c> reports delete
+/// success even when no row existed, so cross-process double-takes are undetected there.  More
+/// generally, because <see cref="IRepository"/> deletes are fetch-then-delete rather than atomic,
+/// two processes sharing the same backing store can race a concurrent Take in the window between
+/// fetch and delete.  Fully excluding a cross-process double-take requires an atomic
+/// delete-returning storage operation, tracked as BryanApellanes/threeheadz-tracker#24.  Register
+/// as a singleton (see <c>UserAccountsServiceRegistration</c>) so custody state is shared within
+/// the process.
 /// </para>
 /// <para>
 /// Consumers exposing unauthenticated challenge creation should additionally rate-limit
@@ -193,10 +201,13 @@ public class PersistedConfirmationChallengeRepository : IConfirmationChallengeRe
     }
 
     /// <summary>
-    /// Reaps expired challenges from the store and the cache, at most once per
-    /// <see cref="ReapInterval"/>.  The store reap is a filtered delete
-    /// (<c>ExpiresUtc &lt; now</c>) so its cost scales with the number of expired rows, not the
-    /// table size, on translating backends.
+    /// Reaps expired challenges from the cache and the store, at most once per
+    /// <see cref="ReapInterval"/>.  The store sweep is backend-agnostic: it retrieves pending
+    /// records via the predicate query overload and filters <c>ExpiresUtc &lt; now</c> in memory,
+    /// so it removes rows correctly even on backends that evaluate filter operators as equality
+    /// (e.g. <c>ObjectDataRepository</c> — BryanApellanes/bam.data.objects#2).  A store fault
+    /// aborts the sweep without failing the surrounding operation and without advancing
+    /// <see cref="_lastReapedUtc"/>, so the next operation retries.
     /// </summary>
     private void ReapExpired()
     {
@@ -205,9 +216,6 @@ public class PersistedConfirmationChallengeRepository : IConfirmationChallengeRe
         {
             return;
         }
-        _lastReapedUtc = nowUtc;
-        QueryFilter expiredFilter = Query.Where(nameof(ConfirmationChallengeData.ExpiresUtc)) < Query.Value(nowUtc);
-        _repository.DeleteWhere<ConfirmationChallengeData>(expiredFilter);
 
         List<string> expiredHandles = _pendingByHandle
             .Where(cached => cached.Value.ExpiresUtc < nowUtc)
@@ -217,6 +225,24 @@ public class PersistedConfirmationChallengeRepository : IConfirmationChallengeRe
         {
             _pendingByHandle.Remove(handle);
         }
+
+        try
+        {
+            List<ConfirmationChallengeData> expired = _repository
+                .Query<ConfirmationChallengeData>(pending => pending.ExpiresUtc < nowUtc)
+                .ToList();
+            foreach (ConfirmationChallengeData data in expired)
+            {
+                _repository.Delete(data);
+            }
+        }
+        catch (Exception)
+        {
+            // Reaping must never fail the surrounding Save/Take; leaving _lastReapedUtc
+            // unchanged makes the next operation retry the sweep.
+            return;
+        }
+        _lastReapedUtc = nowUtc;
     }
 
     /// <summary>
