@@ -3,7 +3,10 @@ using System.Text;
 using Bam.Encryption;
 using Bam.Encryption.Cose;
 using Bam.UserAccounts.Passkeys;
+using Org.BouncyCastle.Asn1.X9;
 using Org.BouncyCastle.Crypto;
+using Org.BouncyCastle.Crypto.Generators;
+using Org.BouncyCastle.Crypto.Parameters;
 using Org.BouncyCastle.Security;
 
 namespace Bam.UserAccounts.Tests.TestClasses;
@@ -33,9 +36,19 @@ public sealed class SyntheticAuthenticator
         }
         else
         {
-            _keyPair = EccPublicPrivateKeyPair.Generate();
+            _keyPair = GenerateOn(CoseAlgorithms.CurveName(algorithm)!);
             CoseKey = CoseKey.FromEcc(new EccPublicKey(_keyPair.Public), algorithm);
         }
+    }
+
+    /// <summary>Generates an EC key pair on the named curve, the one the algorithm requires.</summary>
+    private static AsymmetricCipherKeyPair GenerateOn(string curveName)
+    {
+        X9ECParameters parameters = ECNamedCurveTable.GetByName(curveName);
+        ECDomainParameters domain = new ECDomainParameters(parameters.Curve, parameters.G, parameters.N, parameters.H, parameters.GetSeed());
+        ECKeyPairGenerator generator = new ECKeyPairGenerator();
+        generator.Init(new ECKeyGenerationParameters(domain, new SecureRandom()));
+        return generator.GenerateKeyPair();
     }
 
     public CoseAlgorithm Algorithm { get; }
