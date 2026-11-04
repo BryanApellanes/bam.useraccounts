@@ -41,7 +41,8 @@ public class PasskeysServiceRegistrationShould : UnitTestMenuContainer
                 ReferenceEquals(registry.Get<IPasskeyCredentialRepository>(), registry.Get<IPasskeyCredentialRepository>()),
                 ReferenceEquals(registry.Get<IConfirmationChallengeRepository>(), registry.Get<IConfirmationChallengeRepository>()),
                 ReferenceEquals(registry.Get<PasskeyOptions>(), registry.Get<PasskeyOptions>()),
-                registry.Contains<IAccountConfirmation>());
+                registry.Get<IAccountConfirmation>(),
+                registry.Get<IChallengeSignatureVerifier>());
         })
         .TheTest
         .ShouldPass<ResolutionOutcome>((because, outcome) =>
@@ -55,7 +56,8 @@ public class PasskeysServiceRegistrationShould : UnitTestMenuContainer
             because.ItsTrue("credential custody is a singleton", outcome.SameCredentials);
             because.ItsTrue("challenge custody is a singleton", outcome.SameChallenges);
             because.ItsTrue("options are a singleton", outcome.SameOptions);
-            because.ItsTrue("IAccountConfirmation is left to the host (device-key path)", !outcome.BindsAccountConfirmation);
+            because.ItsTrue("IAccountConfirmation resolves to the passkey confirmation on a passkey-only host", outcome.AccountConfirmation is PasskeyAccountConfirmation);
+            because.ItsTrue("IChallengeSignatureVerifier resolves to the passkey verifier on a passkey-only host", outcome.InterfaceChallengeVerifier is PasskeyChallengeSignatureVerifier);
         })
         .SoBeHappy()
         .UnlessItFailed();
@@ -112,7 +114,7 @@ public class PasskeysServiceRegistrationShould : UnitTestMenuContainer
 
     private sealed record ResolutionOutcome(IPasskeyCeremony Ceremony, PasskeyAccountConfirmation Confirmation, PasskeyChallengeSignatureVerifier ChallengeVerifier,
         IDetachedSignatureVerifier SignatureVerifier, IConfirmationChallengeRepository Challenges, IPasskeyCredentialRepository Credentials,
-        bool SameCredentials, bool SameChallenges, bool SameOptions, bool BindsAccountConfirmation);
+        bool SameCredentials, bool SameChallenges, bool SameOptions, IAccountConfirmation AccountConfirmation, IChallengeSignatureVerifier InterfaceChallengeVerifier);
 
     private sealed record CoexistenceOutcome(IPasskeyCredentialRepository Credentials, IConfirmationChallengeRepository Challenges, IAccountConfirmation AccountConfirmation,
         IChallengeSignatureVerifier ChallengeVerifier, PasskeyAccountConfirmation PasskeyConfirmation, bool InvalidOptionsThrow);

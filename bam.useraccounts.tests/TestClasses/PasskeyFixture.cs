@@ -68,6 +68,14 @@ public sealed class PasskeyFixture
         return Ceremony.CompleteRegistration(handle, authenticator.Register(challenge));
     }
 
+    /// <summary>Runs the authenticated add-a-passkey path for the handle and returns the result.</summary>
+    public PasskeyRegistrationResult RegisterAdditional(SyntheticAuthenticator authenticator, string handle = Handle)
+    {
+        PasskeyCreationOptions creation = Ceremony.BeginAdditionalRegistration(handle, "Jane Doe");
+        byte[] challenge = Base64UrlEncoder.Default.Decode(creation.Challenge);
+        return Ceremony.CompleteAdditionalRegistration(handle, authenticator.Register(challenge));
+    }
+
     /// <summary>Runs a full assertion for the handle with the authenticator and returns the result.</summary>
     public PasskeySignInResult SignIn(SyntheticAuthenticator authenticator, string? handle = Handle, string? userHandle = null)
     {

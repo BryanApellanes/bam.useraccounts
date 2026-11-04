@@ -122,7 +122,7 @@ public class PasskeyAccountConfirmationShould : UnitTestMenuContainer
 
             harness.ServedKeySet = harness.KeySet;
             SyntheticAuthenticator second = new SyntheticAuthenticator();
-            harness.Fixture.Register(second);
+            harness.Fixture.RegisterAdditional(second);
             second.SignCount = 2;
             ConfirmationChallenge secondChallenge = harness.Confirmation.CreateChallenge(PasskeyFixture.Handle);
             ConfirmationResult secondCredential = harness.Confirmation.VerifySignedChallenge(PasskeyFixture.Handle, harness.Answer(secondChallenge, second));
@@ -138,7 +138,7 @@ public class PasskeyAccountConfirmationShould : UnitTestMenuContainer
             because.ItsTrue("assertion over other bytes fails generically", !outcome.WrongBytes.Confirmed && outcome.WrongBytes.Message == DeviceKeyAccountConfirmation.VerificationFailedMessage);
             because.ItsTrue("missing key set fails generically", !outcome.NoKeySet.Confirmed && outcome.NoKeySet.Message == DeviceKeyAccountConfirmation.VerificationFailedMessage);
             because.ItsTrue("key-set credential whose key is not the registered key set fails", !outcome.ForeignKeySet.Confirmed);
-            because.ItsTrue("a second, non-key-set credential of the same person confirms", outcome.SecondCredential.Confirmed, outcome.SecondCredential.Message);
+            because.ItsTrue("a second credential added through the authenticated path confirms", outcome.SecondCredential.Confirmed, outcome.SecondCredential.Message);
         })
         .SoBeHappy()
         .UnlessItFailed();

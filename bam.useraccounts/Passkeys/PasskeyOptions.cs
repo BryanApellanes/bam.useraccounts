@@ -108,6 +108,11 @@ public sealed class PasskeyOptions
         {
             return false;
         }
+        if (presented.AbsolutePath != "/" || !string.IsNullOrEmpty(presented.Query) || !string.IsNullOrEmpty(presented.Fragment) || !string.IsNullOrEmpty(presented.UserInfo))
+        {
+            // A browser origin is scheme://host[:port] and nothing else.
+            return false;
+        }
         foreach (string allowed in AllowedOrigins)
         {
             if (Uri.TryCreate(allowed, UriKind.Absolute, out Uri? allowedUri)

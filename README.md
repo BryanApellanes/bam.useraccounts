@@ -40,7 +40,7 @@ Authentication is handled through the `IAuthenticator` interface and its impleme
 | `SignUpOptions` | Input data: `EmailAddress`, `UserName`, `PasswordHash`, `SendConfirmation`. |
 | **Passkeys (`Bam.UserAccounts.Passkeys`)** | |
 | `PasskeyOptions` | Relying-party policy: `RpId`, `RpName`, `AllowedOrigins`, `RequireUserVerification`, `ChallengeLifetime`, `Algorithms` (ES256, RS256 by default). `Validate()` runs at registration. |
-| `IPasskeyCeremony` / `PasskeyCeremony` | The WebAuthn ceremonies: `BeginRegistration` / `CompleteRegistration` and `BeginAssertion` / `CompleteAssertion`, plus `ToRequestOptions` for a confirmation challenge. Challenges live in `IConfirmationChallengeRepository` under `passkey-*:` prefixed handles. |
+| `IPasskeyCeremony` / `PasskeyCeremony` | The WebAuthn ceremonies: sign-up `BeginRegistration` / `CompleteRegistration`, authenticated-only `BeginAdditionalRegistration` / `CompleteAdditionalRegistration`, `BeginAssertion` / `CompleteAssertion`, plus `ToRequestOptions` for a confirmation challenge. Challenges live in `IConfirmationChallengeRepository` under `passkey-*:` prefixed handles. |
 | `PasskeyRegistrationVerifier`, `PasskeyAssertionVerifier` | Pure verifiers for a registration response (WebAuthn section 7.1) and an assertion (section 7.2). Never throw on client input; return a `PasskeyVerification` with a `PasskeyVerificationFailure`. |
 | `IPasskeyCredentialRepository` | Credential custody: `Save`, `FindByCredentialId`, `FindByHandle`, `FindByUserHandle`, `RecordUse`, `FlagSignCountRegression`, `Remove`. `InMemoryPasskeyCredentialRepository` and `PersistedPasskeyCredentialRepository` (over `IRepository`). |
 | `PasskeyCredentialData` | The stored credential: credential id, user handle, public key PEM, COSE algorithm, sign counter, AAGUID, transports, backup flags, whether it is the person's registered key set. |
@@ -141,12 +141,18 @@ registry.AddPasskeys(new PasskeyOptions
 });
 IPasskeyCeremony ceremony = registry.Get<IPasskeyCeremony>();
 
-// 1. Registration: send the creation options to the browser, verify what it returns.
+// 1. Sign-up: send the creation options to the browser, verify what it returns. Anonymous callers
+//    may reach this; it claims the handle for its first passkey and refuses a handle that is taken.
 PasskeyCreationOptions creation = ceremony.BeginRegistration("person-handle", "Jane Doe");
 // ... browser runs navigator.credentials.create({ publicKey: creation }) and posts the result ...
 PasskeyRegistrationResponse registration = PasskeyRegistrationResponse.FromJson(requestBodyBytes);
 PasskeyRegistrationResult registered = ceremony.CompleteRegistration("person-handle", registration);
-// registered.KeySetRegistered is true when this credential became the person's key set.
+// registered.KeySetRegistered is true: this credential is the person's key set.
+
+// 1b. Adding a passkey to an existing person. ONLY for a caller the host has already
+//     authenticated as "person-handle" (a signed-in session): never on an anonymous surface.
+PasskeyCreationOptions more = ceremony.BeginAdditionalRegistration("person-handle", "Jane Doe");
+PasskeyRegistrationResult added = ceremony.CompleteAdditionalRegistration("person-handle", PasskeyRegistrationResponse.FromJson(requestBodyBytes));
 
 // 2. Sign-in: a discoverable (handle-less) or handle-scoped assertion.
 PasskeyRequestOptions request = ceremony.BeginAssertion(personHandle: null);
@@ -165,10 +171,13 @@ Behaviour worth knowing:
 
 - Every failure returns one generic message (`PasskeyCeremony.VerificationFailedMessage` or `DeviceKeyAccountConfirmation.VerificationFailedMessage`); the specific `PasskeyVerificationFailure` and detail are logged at warning level and carried on the result for the host, never for the wire.
 - Challenges are single-use and expire after `PasskeyOptions.ChallengeLifetime`. A failed attempt consumes the challenge.
-- The first credential a person registers is registered as their public key set through `IPublicKeySetRegistrar`. If the handle already has a key set (for example from a device key) the passkey is stored as an additional credential and the existing key set stands. Key material already registered to another handle, or revoked, is refused.
+- Sign-up (`BeginRegistration` / `CompleteRegistration`) claims a handle: the passkey is registered as the person's public key set through `IPublicKeySetRegistrar`, and a handle that already has a passkey or a key set is refused (`HandleAlreadyRegistered`) with nothing stored, so an anonymous caller can never attach a credential to an existing person. `BeginRegistration` reveals nothing about whether a handle exists. Key material already registered to another handle, or revoked, is refused. The credential row is saved before the registrar is consulted and removed when the registrar refuses.
+- Adding a passkey (`BeginAdditionalRegistration` / `CompleteAdditionalRegistration`) is the authenticated path: call it only for a caller already signed in as the handle. It reuses the person's user id, excludes their existing credentials, and stores the passkey as an additional credential; when the person has only a device-key key set, that key set stands.
+- `BeginAssertion(handle)` binds the ceremony to the handle: a credential belonging to anyone else fails. It also reveals whether the handle has credentials, so anonymous sign-in surfaces should prefer discoverable sign-in (`BeginAssertion(null)`) and read the person from `PasskeySignInResult.PersonHandle`.
+- Every `Begin*` call stores a challenge row for any caller; hosts rate-limit anonymous surfaces as they do for confirmation challenges.
 - The sign counter is enforced when the stored counter is non-zero; a counter that does not advance flags the credential (`SignCountRegressed`) and refuses the assertion.
 - Base64url fields over 64 KiB are refused before decoding. Hosts should still bound the request body.
-- `AddPasskeys` binds the two adapters under their concrete types, not `IAccountConfirmation` / `IChallengeSignatureVerifier`, so a host that also calls `AddDeviceKeyAccountConfirmation` keeps the device-key bindings and chooses the passkey path by resolving `PasskeyAccountConfirmation`. Existing `IConfirmationChallengeRepository`, `IPasskeyCredentialRepository` and `IDetachedSignatureVerifier` bindings are respected; note that `AddDeviceKeyAccountConfirmation` itself rebinds challenge custody, so bind custom custody after it.
+- `AddPasskeys` binds the two adapters under their concrete types and, when the host has not bound them, under `IAccountConfirmation` / `IChallengeSignatureVerifier`, so a passkey-only host gets `UserAccountService.ConfirmAccount` on passkeys purely by registration. A host that calls `AddDeviceKeyAccountConfirmation` first keeps the device-key bindings and reaches the passkey path by resolving `PasskeyAccountConfirmation`. Existing `IConfirmationChallengeRepository`, `IPasskeyCredentialRepository` and `IDetachedSignatureVerifier` bindings are respected; note that `AddDeviceKeyAccountConfirmation` itself rebinds challenge custody, so bind custom custody after it.
 - Attestation statements are not verified; registration asks for `attestation: "none"`.
 
 ## Known Gaps / Not Yet Implemented

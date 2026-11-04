@@ -102,13 +102,22 @@ public class PasskeyAssertionVerifierShould : UnitTestMenuContainer
             badKeyStored.PublicKeyPem = "not a pem";
             PasskeyVerificationFailure badStoredKey = verifier.Verify(authenticator.Assert(challenge), challenge, badKeyStored).Failure;
 
+            string challengeText = Base64UrlEncoder.Default.Encode(challenge);
+            byte[] objectType = System.Text.Encoding.UTF8.GetBytes("{\"type\":{},\"challenge\":\"" + challengeText + "\",\"origin\":\"https://lumberjack.live\"}");
+            byte[] arrayChallenge = System.Text.Encoding.UTF8.GetBytes("{\"type\":\"webauthn.get\",\"challenge\":[\"a\"],\"origin\":\"https://lumberjack.live\"}");
+            byte[] stringCrossOrigin = System.Text.Encoding.UTF8.GetBytes("{\"type\":\"webauthn.get\",\"challenge\":\"" + challengeText + "\",\"origin\":\"https://lumberjack.live\",\"crossOrigin\":\"yes\"}");
+            PasskeyVerificationFailure objectTypeFailure = verifier.Verify(authenticator.Assert(challenge, clientData: objectType), challenge, stored).Failure;
+            PasskeyVerificationFailure arrayChallengeFailure = verifier.Verify(authenticator.Assert(challenge, clientData: arrayChallenge), challenge, stored).Failure;
+            PasskeyVerificationFailure stringCrossOriginFailure = verifier.Verify(authenticator.Assert(challenge, clientData: stringCrossOrigin), challenge, stored).Failure;
+
             authenticator.UserVerified = false;
             PasskeyVerificationFailure uvRequired = new PasskeyAssertionVerifier(PasskeyFixture.DefaultOptions(requireUserVerification: true), new DetachedSignatureVerifier())
                 .Verify(authenticator.Assert(challenge), challenge, stored).Failure;
             authenticator.UserVerified = true;
 
             return new RejectionOutcome(nullResponse, tamperedSignature, otherKey, foreignId, userHandleMismatch, wrongType, challengeMismatch, origin, rpId,
-                badAuthData, emptySignature, sameCount, lowerCount, zeroWithZeroStored, unsupportedAlgorithm, badStoredKey, uvRequired);
+                badAuthData, emptySignature, sameCount, lowerCount, zeroWithZeroStored, unsupportedAlgorithm, badStoredKey, uvRequired,
+                objectTypeFailure, arrayChallengeFailure, stringCrossOriginFailure);
         })
         .TheTest
         .ShouldPass<RejectionOutcome>((because, outcome) =>
@@ -130,6 +139,9 @@ public class PasskeyAssertionVerifierShould : UnitTestMenuContainer
             because.ItsTrue("unsupported stored algorithm is refused", outcome.UnsupportedAlgorithm == PasskeyVerificationFailure.UnsupportedAlgorithm);
             because.ItsTrue("unparseable stored key is refused", outcome.BadStoredKey == PasskeyVerificationFailure.InvalidCredentialKey);
             because.ItsTrue("user not verified is refused when required", outcome.UvRequired == PasskeyVerificationFailure.UserNotVerified);
+            because.ItsTrue("client data whose type is an object is malformed, not an exception", outcome.ObjectType == PasskeyVerificationFailure.MalformedClientData);
+            because.ItsTrue("client data whose challenge is an array is malformed, not an exception", outcome.ArrayChallenge == PasskeyVerificationFailure.MalformedClientData);
+            because.ItsTrue("client data whose crossOrigin is a string is malformed, not an exception", outcome.StringCrossOrigin == PasskeyVerificationFailure.MalformedClientData);
         })
         .SoBeHappy()
         .UnlessItFailed();
@@ -158,5 +170,6 @@ public class PasskeyAssertionVerifierShould : UnitTestMenuContainer
         PasskeyVerificationFailure ForeignId, PasskeyVerificationFailure UserHandleMismatch, PasskeyVerificationFailure WrongType, PasskeyVerificationFailure ChallengeMismatch,
         PasskeyVerificationFailure Origin, PasskeyVerificationFailure RpId, PasskeyVerificationFailure BadAuthData, PasskeyVerificationFailure EmptySignature,
         PasskeyVerificationFailure SameCount, PasskeyVerificationFailure LowerCount, PasskeyVerificationFailure ZeroWithZeroStored, PasskeyVerificationFailure UnsupportedAlgorithm,
-        PasskeyVerificationFailure BadStoredKey, PasskeyVerificationFailure UvRequired);
+        PasskeyVerificationFailure BadStoredKey, PasskeyVerificationFailure UvRequired, PasskeyVerificationFailure ObjectType, PasskeyVerificationFailure ArrayChallenge,
+        PasskeyVerificationFailure StringCrossOrigin);
 }

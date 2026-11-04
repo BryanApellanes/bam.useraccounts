@@ -43,5 +43,10 @@ public enum PasskeyVerificationFailure
     /// <summary>The pending challenge had expired.</summary>
     ChallengeExpired,
     /// <summary>No challenge was pending for the handle or ceremony.</summary>
-    NoPendingChallenge
+    NoPendingChallenge,
+    /// <summary>
+    /// Sign-up was attempted for a handle that already has a passkey or a registered key set.
+    /// Additional passkeys are added through the authenticated path.
+    /// </summary>
+    HandleAlreadyRegistered
 }

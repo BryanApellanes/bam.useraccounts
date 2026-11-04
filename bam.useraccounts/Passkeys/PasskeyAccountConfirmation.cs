@@ -42,7 +42,6 @@ public sealed class PasskeyAccountConfirmation : IAccountConfirmation
     /// <inheritdoc />
     public ConfirmationChallenge CreateChallenge(string personHandle)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(personHandle);
         byte[] challengeBytes = new byte[32];
         RandomNumberGenerator.Fill(challengeBytes);
         ConfirmationChallenge challenge = new ConfirmationChallenge

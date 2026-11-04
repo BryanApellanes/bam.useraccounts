@@ -11,8 +11,10 @@ namespace Bam.UserAccounts.Passkeys;
 /// assertion is then verified as in the sign-in ceremony (sign counter recorded, regressions
 /// flagged).  <paramref name="signerPublicKey"/> is honoured when the credential is the person's
 /// registered key set: its fingerprint must match.  Later credentials of the same person carry
-/// their own keys, so for those the credential store, written only by the registration ceremony,
-/// is the trust anchor and the key-set key is not compared.
+/// their own keys, so for those the credential store is the trust anchor and the key-set key is
+/// not compared.  That is sound because the store is written only by the sign-up ceremony, which
+/// refuses a handle that already has a credential or a key set, and by the additional-registration
+/// path, which the host exposes only to a caller already authenticated as the person.
 /// </summary>
 public sealed class PasskeyChallengeSignatureVerifier : IChallengeSignatureVerifier
 {

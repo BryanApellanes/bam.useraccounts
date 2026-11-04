@@ -101,8 +101,12 @@ public class PasskeyRegistrationVerifierShould : UnitTestMenuContainer
             PasskeyVerificationFailure badAttestation = Failure(options, good with { Response = good.Response with { AttestationObject = Base64UrlEncoder.Default.Encode(Encoding.UTF8.GetBytes("garbage")) } }, challenge);
             PasskeyVerificationFailure noAttestedCredential = Failure(options, authenticator.Register(challenge, authData: authenticator.AuthenticatorData(false)), challenge);
             PasskeyVerificationFailure wrongResponseType = Failure(options, good with { Type = "password" }, challenge);
+            byte[] withExtensions = authenticator.AuthenticatorData(true, extensions: CborWriter.Encode(CborWriter.Map(CborWriter.Entry("credProps", CborWriter.Map()))));
+            PasskeyVerificationFailure extensionsAccepted = Failure(options, authenticator.Register(challenge, authData: withExtensions), challenge);
+            byte[] trailing = authenticator.AuthenticatorData(true).Concat(new byte[] { 0x00 }).ToArray();
+            PasskeyVerificationFailure trailingBytes = Failure(options, authenticator.Register(challenge, authData: trailing), challenge);
             return new RejectionOutcome(nullResponse, wrongType, challengeMismatch, origin, rpId, notPresent, notVerifiedButRequired,
-                notVerifiedButPreferred, idMismatch, unsupported, notJson, notBase64, badAttestation, noAttestedCredential, wrongResponseType);
+                notVerifiedButPreferred, idMismatch, unsupported, notJson, notBase64, badAttestation, noAttestedCredential, wrongResponseType, extensionsAccepted, trailingBytes);
         })
         .TheTest
         .ShouldPass<RejectionOutcome>((because, outcome) =>
@@ -122,6 +126,8 @@ public class PasskeyRegistrationVerifierShould : UnitTestMenuContainer
             because.ItsTrue("non-CBOR attestation object is refused", outcome.BadAttestation == PasskeyVerificationFailure.MalformedAttestation);
             because.ItsTrue("authenticator data without an attested credential is refused", outcome.NoAttestedCredential == PasskeyVerificationFailure.MalformedAuthenticatorData);
             because.ItsTrue("response type other than public-key is refused", outcome.WrongResponseType == PasskeyVerificationFailure.MalformedClientData);
+            because.ItsTrue("authenticator data with an extensions map is accepted", outcome.ExtensionsAccepted == PasskeyVerificationFailure.None);
+            because.ItsTrue("authenticator data with trailing bytes is refused", outcome.TrailingBytes == PasskeyVerificationFailure.MalformedAuthenticatorData);
         })
         .SoBeHappy()
         .UnlessItFailed();
@@ -137,5 +143,6 @@ public class PasskeyRegistrationVerifierShould : UnitTestMenuContainer
     private sealed record RejectionOutcome(PasskeyVerificationFailure NullResponse, PasskeyVerificationFailure WrongType, PasskeyVerificationFailure ChallengeMismatch,
         PasskeyVerificationFailure Origin, PasskeyVerificationFailure RpId, PasskeyVerificationFailure NotPresent, PasskeyVerificationFailure NotVerifiedButRequired,
         PasskeyVerificationFailure NotVerifiedButPreferred, PasskeyVerificationFailure IdMismatch, PasskeyVerificationFailure Unsupported, PasskeyVerificationFailure NotJson,
-        PasskeyVerificationFailure NotBase64, PasskeyVerificationFailure BadAttestation, PasskeyVerificationFailure NoAttestedCredential, PasskeyVerificationFailure WrongResponseType);
+        PasskeyVerificationFailure NotBase64, PasskeyVerificationFailure BadAttestation, PasskeyVerificationFailure NoAttestedCredential, PasskeyVerificationFailure WrongResponseType,
+        PasskeyVerificationFailure ExtensionsAccepted, PasskeyVerificationFailure TrailingBytes);
 }

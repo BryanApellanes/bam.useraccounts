@@ -27,6 +27,9 @@ public class PasskeyOptionsShould : UnitTestMenuContainer
                 options.IsOriginAllowed("https://lumberjack.live:444"),
                 options.IsOriginAllowed("https://evil.example"),
                 options.IsOriginAllowed(null),
+                options.IsOriginAllowed("https://lumberjack.live/path"),
+                options.IsOriginAllowed("https://lumberjack.live/?q=1"),
+                options.IsOriginAllowed("https://user@lumberjack.live"),
                 options.UserVerification);
         })
         .TheTest
@@ -39,6 +42,9 @@ public class PasskeyOptionsShould : UnitTestMenuContainer
             because.ItsTrue("port must match", !outcome.WrongPort);
             because.ItsTrue("unlisted host is refused", !outcome.OtherHost);
             because.ItsTrue("null origin is refused", !outcome.Null);
+            because.ItsTrue("origin with a path is refused", !outcome.WithPath);
+            because.ItsTrue("origin with a query is refused", !outcome.WithQuery);
+            because.ItsTrue("origin with user info is refused", !outcome.WithUserInfo);
             because.ItsTrue("user verification defaults to preferred", outcome.UserVerification == "preferred");
         })
         .SoBeHappy()
@@ -98,7 +104,7 @@ public class PasskeyOptionsShould : UnitTestMenuContainer
         }
     }
 
-    private sealed record OriginOutcome(bool Exact, bool UpperHost, bool Subdomain, bool WrongScheme, bool WrongPort, bool OtherHost, bool Null, string UserVerification);
+    private sealed record OriginOutcome(bool Exact, bool UpperHost, bool Subdomain, bool WrongScheme, bool WrongPort, bool OtherHost, bool Null, bool WithPath, bool WithQuery, bool WithUserInfo, string UserVerification);
 
     private sealed record RejectionOutcome(bool RpIdWithScheme, bool RpIdMixedCase, bool EmptyRpName, bool NoOrigins, bool OriginWithPath,
         bool ForeignOrigin, bool SuffixOrigin, bool NoAlgorithms, bool UnsupportedAlgorithm, bool ZeroLifetime, bool RequireUvAccepted);

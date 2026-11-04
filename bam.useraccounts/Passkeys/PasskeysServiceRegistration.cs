@@ -13,9 +13,12 @@ public static class PasskeysServiceRegistration
     /// assertion verifiers, <see cref="IPasskeyCeremony"/> (<see cref="PasskeyCeremony"/>), the
     /// <see cref="IChallengeSignatureVerifier"/>-shaped <see cref="PasskeyChallengeSignatureVerifier"/>
     /// and the <see cref="IAccountConfirmation"/>-shaped <see cref="PasskeyAccountConfirmation"/>.
-    /// The two adapters are bound under their own concrete types, not the interfaces, so a host
-    /// that also runs <see cref="UserAccountsServiceRegistration.AddDeviceKeyAccountConfirmation"/>
-    /// keeps the device-key bindings and picks the passkey path by resolving the concrete type.
+    /// The two adapters are always bound under their concrete types, and under
+    /// <see cref="IAccountConfirmation"/> / <see cref="IChallengeSignatureVerifier"/> only when the
+    /// host has not bound those interfaces: a passkey-only host gets <c>UserAccountService</c> on
+    /// passkeys purely by registration, while a host that ran
+    /// <see cref="UserAccountsServiceRegistration.AddDeviceKeyAccountConfirmation"/> first keeps the
+    /// device-key bindings and reaches the passkey path through the concrete types.
     /// <para>
     /// Singleton custody is bound only when the host has not bound it: an existing
     /// <see cref="IConfirmationChallengeRepository"/>, <see cref="IPasskeyCredentialRepository"/> or
@@ -58,6 +61,14 @@ public static class PasskeysServiceRegistration
             .For<IPasskeyCeremony>().Use<PasskeyCeremony>()
             .For<PasskeyChallengeSignatureVerifier>().Use<PasskeyChallengeSignatureVerifier>()
             .For<PasskeyAccountConfirmation>().Use<PasskeyAccountConfirmation>();
+        if (!registry.Contains<IChallengeSignatureVerifier>())
+        {
+            registry.For<IChallengeSignatureVerifier>().Use<PasskeyChallengeSignatureVerifier>();
+        }
+        if (!registry.Contains<IAccountConfirmation>())
+        {
+            registry.For<IAccountConfirmation>().Use<PasskeyAccountConfirmation>();
+        }
 
         return registry;
     }

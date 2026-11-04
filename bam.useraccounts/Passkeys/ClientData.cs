@@ -78,17 +78,34 @@ public sealed record ClientData
             error = "clientDataJSON is not valid UTF-8 JSON: " + e.Message;
             return false;
         }
-        string? type = json.Value<string>("type");
-        string? challenge = json.Value<string>("challenge");
-        string? origin = json.Value<string>("origin");
+        string? type = StringMember(json, "type");
+        string? challenge = StringMember(json, "challenge");
+        string? origin = StringMember(json, "origin");
         if (string.IsNullOrEmpty(type) || string.IsNullOrEmpty(challenge) || string.IsNullOrEmpty(origin))
         {
-            error = "clientDataJSON is missing type, challenge or origin.";
+            error = "clientDataJSON is missing type, challenge or origin, or one of them is not a string.";
             return false;
         }
-        bool crossOrigin = json.Value<bool?>("crossOrigin") ?? false;
+        JToken? crossOriginToken = json["crossOrigin"];
+        bool crossOrigin = false;
+        if (crossOriginToken is not null && crossOriginToken.Type != JTokenType.Null)
+        {
+            if (crossOriginToken.Type != JTokenType.Boolean)
+            {
+                error = "clientDataJSON crossOrigin is not a boolean.";
+                return false;
+            }
+            crossOrigin = crossOriginToken.Value<bool>();
+        }
         clientData = new ClientData(type, challenge, origin, crossOrigin, rawBytes);
         return true;
+    }
+
+    /// <summary>The member's string value, or null when it is absent or not a JSON string (never throws).</summary>
+    private static string? StringMember(JObject json, string name)
+    {
+        JToken? token = json[name];
+        return token is not null && token.Type == JTokenType.String ? token.Value<string>() : null;
     }
 
     /// <summary>Parses client data.</summary>
