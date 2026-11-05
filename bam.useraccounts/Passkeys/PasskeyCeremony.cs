@@ -14,7 +14,10 @@ namespace Bam.UserAccounts.Passkeys;
 /// (<see cref="IPasskeyCredentialRepository"/>) and key-set registration
 /// (<see cref="IPublicKeySetRegistrar"/>).  Challenges are keyed into the challenge repository
 /// under prefixed handles so passkey ceremonies never collide with device-key confirmation
-/// challenges for the same person.  Every failure is logged at warning level with its
+/// challenges for the same person, and the sign-up, additional-registration and assertion
+/// ceremonies never collide with each other.  Every ceremony that needs two rows (a challenge
+/// and a user handle, or a challenge and a handle binding) fails closed when either row is
+/// missing at completion.  Every failure is logged at warning level with its
 /// <see cref="PasskeyVerificationFailure"/> and detail; the result carries one generic message
 /// so an unauthenticated caller learns nothing about which check failed.
 /// <para>
@@ -33,6 +36,8 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
 
     private const string RegistrationPrefix = "passkey-registration:";
     private const string UserHandlePrefix = "passkey-user-handle:";
+    private const string AdditionalPrefix = "passkey-additional:";
+    private const string AdditionalUserHandlePrefix = "passkey-additional-user-handle:";
     private const string AssertionPrefix = "passkey-assertion:";
     private const string AssertionHandlePrefix = "passkey-assertion-handle:";
 
@@ -65,14 +70,14 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
     {
         // Sign-up never reads the handle's credentials: an anonymous caller must not learn
         // whether the handle exists, which credential ids it has or its stable user handle.
-        return Begin(personHandle, displayName, new List<PasskeyCredentialData>());
+        return Begin(personHandle, displayName, new List<PasskeyCredentialData>(), additional: false);
     }
 
     /// <inheritdoc />
     public PasskeyCreationOptions BeginAdditionalRegistration(string personHandle, string displayName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(personHandle);
-        return Begin(personHandle, displayName, _credentials.FindByHandle(personHandle));
+        return Begin(personHandle, displayName, _credentials.FindByHandle(personHandle), additional: true);
     }
 
     /// <inheritdoc />
@@ -94,14 +99,16 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
         string ceremonyId = Base64UrlEncoder.Default.Encode(RandomBytes(16));
         DateTime expiresUtc = DateTime.UtcNow.Add(_options.ChallengeLifetime);
         _challenges.Save(new ConfirmationChallenge { PersonHandle = AssertionPrefix + ceremonyId, ChallengeBytes = challenge, ExpiresUtc = expiresUtc });
-        List<PasskeyCredentialDescriptor> allow = new List<PasskeyCredentialDescriptor>();
-        if (!string.IsNullOrWhiteSpace(personHandle))
-        {
-            // Bind the ceremony to the handle it was begun for (WebAuthn 7.2 step 6): completion
-            // refuses a credential that belongs to anyone else.
-            _challenges.Save(new ConfirmationChallenge { PersonHandle = AssertionHandlePrefix + ceremonyId, ChallengeBytes = Encoding.UTF8.GetBytes(personHandle), ExpiresUtc = expiresUtc });
-            allow = _credentials.FindByHandle(personHandle).Select(Describe).ToList();
-        }
+        // The handle binding row is always written (WebAuthn 7.2 step 6): the handle's UTF-8 bytes
+        // for a handle-scoped ceremony, empty for a discoverable one.  Completion refuses a
+        // credential that belongs to anyone else, and fails closed when the row is gone, so a
+        // binding can never be lost without the ceremony being lost with it.
+        bool scoped = !string.IsNullOrWhiteSpace(personHandle);
+        byte[] binding = scoped ? Encoding.UTF8.GetBytes(personHandle!) : Array.Empty<byte>();
+        _challenges.Save(new ConfirmationChallenge { PersonHandle = AssertionHandlePrefix + ceremonyId, ChallengeBytes = binding, ExpiresUtc = expiresUtc });
+        List<PasskeyCredentialDescriptor> allow = scoped
+            ? _credentials.FindByHandle(personHandle!).Select(Describe).ToList()
+            : new List<PasskeyCredentialDescriptor>();
         return BuildRequestOptions(challenge, allow, ceremonyId);
     }
 
@@ -118,6 +125,10 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
         {
             return SignInFailed(response.Id, PasskeyVerificationFailure.NoPendingChallenge, "no assertion is pending for the ceremony id.");
         }
+        if (scopedHandle is null)
+        {
+            return SignInFailed(response.Id, PasskeyVerificationFailure.NoPendingChallenge, "the ceremony's handle binding is missing.");
+        }
         if (DateTime.UtcNow > challenge.ExpiresUtc)
         {
             return SignInFailed(response.Id, PasskeyVerificationFailure.ChallengeExpired, "the assertion challenge has expired.");
@@ -127,7 +138,7 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
         {
             return SignInFailed(response.Id, PasskeyVerificationFailure.UnknownCredential, "no credential is registered under the response id.");
         }
-        if (scopedHandle is not null && !string.Equals(Encoding.UTF8.GetString(scopedHandle.ChallengeBytes), credential.PersonHandle, StringComparison.Ordinal))
+        if (scopedHandle.ChallengeBytes.Length > 0 && !string.Equals(Encoding.UTF8.GetString(scopedHandle.ChallengeBytes), credential.PersonHandle, StringComparison.Ordinal))
         {
             return SignInFailed(response.Id, PasskeyVerificationFailure.UnknownCredential, "the credential does not belong to the handle the ceremony was begun for.");
         }
@@ -172,7 +183,7 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
         };
     }
 
-    private PasskeyCreationOptions Begin(string personHandle, string displayName, IReadOnlyList<PasskeyCredentialData> existing)
+    private PasskeyCreationOptions Begin(string personHandle, string displayName, IReadOnlyList<PasskeyCredentialData> existing, bool additional)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(personHandle);
         byte[] userHandle = existing.Count > 0
@@ -180,8 +191,12 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
             : RandomBytes(32);
         byte[] challenge = RandomBytes(32);
         DateTime expiresUtc = DateTime.UtcNow.Add(_options.ChallengeLifetime);
-        _challenges.Save(new ConfirmationChallenge { PersonHandle = RegistrationPrefix + personHandle, ChallengeBytes = challenge, ExpiresUtc = expiresUtc });
-        _challenges.Save(new ConfirmationChallenge { PersonHandle = UserHandlePrefix + personHandle, ChallengeBytes = userHandle, ExpiresUtc = expiresUtc });
+        // Sign-up and additional registration keep separate rows: an anonymous sign-up attempt
+        // for a handle can never clobber the pending ceremony of the authenticated person.
+        string challengePrefix = additional ? AdditionalPrefix : RegistrationPrefix;
+        string userHandlePrefix = additional ? AdditionalUserHandlePrefix : UserHandlePrefix;
+        _challenges.Save(new ConfirmationChallenge { PersonHandle = challengePrefix + personHandle, ChallengeBytes = challenge, ExpiresUtc = expiresUtc });
+        _challenges.Save(new ConfirmationChallenge { PersonHandle = userHandlePrefix + personHandle, ChallengeBytes = userHandle, ExpiresUtc = expiresUtc });
 
         return new PasskeyCreationOptions
         {
@@ -204,8 +219,8 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
     private PasskeyRegistrationResult Complete(string personHandle, PasskeyRegistrationResponse? response, bool additional)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(personHandle);
-        ConfirmationChallenge? challenge = _challenges.Take(RegistrationPrefix + personHandle);
-        ConfirmationChallenge? userHandle = _challenges.Take(UserHandlePrefix + personHandle);
+        ConfirmationChallenge? challenge = _challenges.Take((additional ? AdditionalPrefix : RegistrationPrefix) + personHandle);
+        ConfirmationChallenge? userHandle = _challenges.Take((additional ? AdditionalUserHandlePrefix : UserHandlePrefix) + personHandle);
         if (challenge is null || userHandle is null)
         {
             return RegistrationFailed(personHandle, PasskeyVerificationFailure.NoPendingChallenge, "no registration is pending for the handle.");
@@ -288,6 +303,21 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
             {
                 _credentials.Remove(credential.CredentialId);
                 return RegistrationFailed(personHandle, PasskeyVerificationFailure.InvalidCredentialKey, e.Message);
+            }
+            catch (KeySetRegistrationException e)
+            {
+                // Any other registrar policy refusal (an unauthorized successor of a revoked
+                // handle, or a refusal added to the registrar later): the handle is not claimable
+                // by this key, and the saved row must not outlive the refusal.
+                _credentials.Remove(credential.CredentialId);
+                return RegistrationFailed(personHandle, PasskeyVerificationFailure.HandleAlreadyRegistered, e.Message);
+            }
+            catch (Exception)
+            {
+                // A fault, not a policy answer: never leave a key-set-marked row behind for a
+                // key the registrar did not accept.
+                _credentials.Remove(credential.CredentialId);
+                throw;
             }
         }
 

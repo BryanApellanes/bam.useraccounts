@@ -145,10 +145,18 @@ public class PasskeyCeremonyShould : UnitTestMenuContainer
             PasskeyRequestOptions discoverable = fixture.Ceremony.BeginAssertion(null);
             PasskeySignInResult discovered = fixture.Ceremony.CompleteAssertion(bob.Assert(Base64UrlEncoder.Default.Decode(discoverable.Challenge), discoverable.CeremonyId));
 
+            bool discoverableRowConsumed = fixture.Challenges.Take("passkey-assertion-handle:" + discoverable.CeremonyId) is null;
+
             bob.SignCount = 6;
             PasskeyRequestOptions own = fixture.Ceremony.BeginAssertion("other-person");
             PasskeySignInResult ownResult = fixture.Ceremony.CompleteAssertion(bob.Assert(Base64UrlEncoder.Default.Decode(own.Challenge), own.CeremonyId));
-            return new BindingOutcome(crossed, scopedRowConsumed, discovered, ownResult);
+
+            bob.SignCount = 7;
+            PasskeyRequestOptions orphaned = fixture.Ceremony.BeginAssertion("other-person");
+            fixture.Challenges.Take("passkey-assertion-handle:" + orphaned.CeremonyId);
+            PasskeySignInResult orphanedResult = fixture.Ceremony.CompleteAssertion(bob.Assert(Base64UrlEncoder.Default.Decode(orphaned.Challenge), orphaned.CeremonyId));
+            bool orphanedChallengeConsumed = fixture.Challenges.Take("passkey-assertion:" + orphaned.CeremonyId) is null;
+            return new BindingOutcome(crossed, scopedRowConsumed, discovered, discoverableRowConsumed, ownResult, orphanedResult, orphanedChallengeConsumed);
         })
         .TheTest
         .ShouldPass<BindingOutcome>((because, outcome) =>
@@ -156,7 +164,10 @@ public class PasskeyCeremonyShould : UnitTestMenuContainer
             because.ItsTrue("another person's credential is refused as unknown", !outcome.Crossed.Success && outcome.Crossed.Failure == PasskeyVerificationFailure.UnknownCredential);
             because.ItsTrue("the handle binding row is consumed with the challenge", outcome.ScopedRowConsumed);
             because.ItsTrue("discoverable sign-in stays unbound and names the person", outcome.Discovered.Success && outcome.Discovered.PersonHandle == "other-person");
+            because.ItsTrue("a discoverable ceremony writes and consumes an empty binding row", outcome.DiscoverableRowConsumed);
             because.ItsTrue("a ceremony begun for the person's own handle succeeds", outcome.OwnResult.Success, outcome.OwnResult.Message);
+            because.ItsTrue("a ceremony whose binding row is gone fails closed as no pending challenge", !outcome.Orphaned.Success && outcome.Orphaned.Failure == PasskeyVerificationFailure.NoPendingChallenge);
+            because.ItsTrue("the orphaned ceremony's challenge is consumed", outcome.OrphanedChallengeConsumed);
         })
         .SoBeHappy()
         .UnlessItFailed();
@@ -221,6 +232,93 @@ public class PasskeyCeremonyShould : UnitTestMenuContainer
             because.ItsTrue("nothing is stored when the registrar rejects the material", !outcome.OtherStored);
             because.ItsTrue("registrar rejecting the key fails as an invalid key", outcome.Invalid.Failure == PasskeyVerificationFailure.InvalidCredentialKey);
             because.ItsTrue("nothing is stored when the registrar rejects the key", !outcome.ThirdStored);
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    [UnitTest]
+    public void RemoveTheSavedCredentialWhateverTheRegistrarDoes()
+    {
+        After.Setup(reg => reg.Set(new PasskeyFixture()))
+        .When<PasskeyFixture>("meets every registrar outcome after saving the credential", (fixture, reg) =>
+        {
+            SyntheticAuthenticator successorKey = new SyntheticAuthenticator();
+            fixture.RegistrarThrows = new UnauthorizedSuccessorException(PasskeyFixture.Handle);
+            PasskeyRegistrationResult successor = fixture.Register(successorKey);
+            bool successorStored = fixture.Credentials.FindByCredentialId(successorKey.CredentialIdBase64Url) is not null;
+
+            SyntheticAuthenticator faultKey = new SyntheticAuthenticator();
+            fixture.RegistrarThrows = new InvalidOperationException("store offline");
+            Exception? fault = null;
+            try
+            {
+                fixture.Register(faultKey);
+            }
+            catch (Exception e)
+            {
+                fault = e;
+            }
+            bool faultStored = fixture.Credentials.FindByCredentialId(faultKey.CredentialIdBase64Url) is not null;
+            int registrarCallsAfterFault = fixture.Registered.Count;
+            fixture.RegistrarThrows = null;
+
+            FaultingPasskeyCredentialRepository faulting = new FaultingPasskeyCredentialRepository(new InMemoryPasskeyCredentialRepository());
+            PasskeyFixture faultingFixture = new PasskeyFixture(credentials: faulting);
+            faulting.SaveThrows = new InvalidOperationException("save failed");
+            Exception? saveFault = null;
+            try
+            {
+                faultingFixture.Register(new SyntheticAuthenticator());
+            }
+            catch (Exception e)
+            {
+                saveFault = e;
+            }
+            int registrarCallsAfterSaveFault = faultingFixture.Registered.Count;
+
+            PasskeyRegistrationResult afterFaults = fixture.Register(new SyntheticAuthenticator());
+            return new RegistrarOutcome(successor, successorStored, fault, faultStored, registrarCallsAfterFault, saveFault, registrarCallsAfterSaveFault, afterFaults);
+        })
+        .TheTest
+        .ShouldPass<RegistrarOutcome>((because, outcome) =>
+        {
+            because.ItsTrue("an unauthorized successor is refused as a handle that is not claimable", !outcome.Successor.Success && outcome.Successor.Failure == PasskeyVerificationFailure.HandleAlreadyRegistered);
+            because.ItsTrue("nothing is stored after the successor refusal", !outcome.SuccessorStored);
+            because.ItsTrue("a registrar fault propagates", outcome.Fault is InvalidOperationException);
+            because.ItsTrue("nothing is stored after the registrar fault", !outcome.FaultStored);
+            because.ItsTrue("the registrar was called for the fault", outcome.RegistrarCallsAfterFault == 2);
+            because.ItsTrue("a custody fault before the registrar propagates", outcome.SaveFault is InvalidOperationException);
+            because.ItsTrue("the registrar is never called when the credential could not be saved", outcome.RegistrarCallsAfterSaveFault == 0);
+            because.ItsTrue("the handle is still claimable after the faults", outcome.AfterFaults.Success && outcome.AfterFaults.KeySetRegistered, outcome.AfterFaults.Message);
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    [UnitTest]
+    public void KeepAdditionalRegistrationChallengesApartFromSignUp()
+    {
+        After.Setup(reg => reg.Set(new PasskeyFixture()))
+        .When<PasskeyFixture>("sees an anonymous sign-up attempt during an authenticated add-a-passkey ceremony", (fixture, reg) =>
+        {
+            SyntheticAuthenticator first = new SyntheticAuthenticator();
+            fixture.Register(first);
+
+            SyntheticAuthenticator second = new SyntheticAuthenticator();
+            PasskeyCreationOptions adding = fixture.Ceremony.BeginAdditionalRegistration(PasskeyFixture.Handle, "Jane Doe");
+            SyntheticAuthenticator intruder = new SyntheticAuthenticator();
+            PasskeyCreationOptions intruding = fixture.Ceremony.BeginRegistration(PasskeyFixture.Handle, "Mallory");
+            PasskeyRegistrationResult added = fixture.Ceremony.CompleteAdditionalRegistration(PasskeyFixture.Handle, second.Register(Base64UrlEncoder.Default.Decode(adding.Challenge)));
+            PasskeyRegistrationResult intrusion = fixture.Ceremony.CompleteRegistration(PasskeyFixture.Handle, intruder.Register(Base64UrlEncoder.Default.Decode(intruding.Challenge)));
+            return new ApartOutcome(added, intrusion, fixture.Credentials.FindByHandle(PasskeyFixture.Handle).Count);
+        })
+        .TheTest
+        .ShouldPass<ApartOutcome>((because, outcome) =>
+        {
+            because.ItsTrue("the authenticated ceremony completes despite the sign-up attempt", outcome.Added.Success && !outcome.Added.KeySetRegistered, outcome.Added.Message);
+            because.ItsTrue("the sign-up attempt is still refused", !outcome.Intrusion.Success && outcome.Intrusion.Failure == PasskeyVerificationFailure.HandleAlreadyRegistered);
+            because.ItsTrue("the person has exactly two credentials", outcome.CredentialCount == 2);
         })
         .SoBeHappy()
         .UnlessItFailed();
@@ -339,7 +437,11 @@ public class PasskeyCeremonyShould : UnitTestMenuContainer
     private sealed record RegistrationOutcome(PasskeyFixture Fixture, SyntheticAuthenticator Authenticator, PasskeyCreationOptions Creation, PasskeyRegistrationResult Result, PasskeyCredentialData? Stored, PasskeyRegistrationResult Again);
     private sealed record SecondOutcome(PasskeyFixture Fixture, SyntheticAuthenticator First, PasskeyRegistrationResult FirstResult, string UserHandle, PasskeyCreationOptions SignUpAgain,
         PasskeyRegistrationResult Intrusion, bool IntruderStored, int RegistrarCallsAfterIntrusion, PasskeyCreationOptions Creation, PasskeyRegistrationResult SecondResult);
-    private sealed record BindingOutcome(PasskeySignInResult Crossed, bool ScopedRowConsumed, PasskeySignInResult Discovered, PasskeySignInResult OwnResult);
+    private sealed record BindingOutcome(PasskeySignInResult Crossed, bool ScopedRowConsumed, PasskeySignInResult Discovered, bool DiscoverableRowConsumed, PasskeySignInResult OwnResult,
+        PasskeySignInResult Orphaned, bool OrphanedChallengeConsumed);
+    private sealed record RegistrarOutcome(PasskeyRegistrationResult Successor, bool SuccessorStored, Exception? Fault, bool FaultStored, int RegistrarCallsAfterFault,
+        Exception? SaveFault, int RegistrarCallsAfterSaveFault, PasskeyRegistrationResult AfterFaults);
+    private sealed record ApartOutcome(PasskeyRegistrationResult Added, PasskeyRegistrationResult Intrusion, int CredentialCount);
     private sealed record FailureOutcome(PasskeyRegistrationResult NoPending, PasskeyRegistrationResult WrongChallenge, PasskeyRegistrationResult Consumed, PasskeyRegistrationResult Expired,
         PasskeyRegistrationResult Conflict, bool StoredDespiteConflict, PasskeyRegistrationResult DeviceKeyPersonAddsPasskey, PasskeyCredentialData? StoredBesideKeySet, PasskeyRegistrationResult Duplicate,
         PasskeyRegistrationResult MaterialConflict, bool OtherStored, PasskeyRegistrationResult Invalid, bool ThirdStored);

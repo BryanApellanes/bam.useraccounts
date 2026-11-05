@@ -14,11 +14,11 @@ public sealed class PasskeyFixture
 {
     public const string Handle = "person-abc";
 
-    public PasskeyFixture(PasskeyOptions? options = null)
+    public PasskeyFixture(PasskeyOptions? options = null, IPasskeyCredentialRepository? credentials = null)
     {
         Options = options ?? DefaultOptions();
         Challenges = new InMemoryConfirmationChallengeRepository();
-        Credentials = new InMemoryPasskeyCredentialRepository();
+        Credentials = credentials ?? new InMemoryPasskeyCredentialRepository();
         Registrar = Substitute.For<IPublicKeySetRegistrar>();
         Registrar.Register(Arg.Any<PublicKeySetData>()).Returns(callInfo =>
         {
@@ -42,7 +42,7 @@ public sealed class PasskeyFixture
 
     public PasskeyOptions Options { get; }
     public InMemoryConfirmationChallengeRepository Challenges { get; }
-    public InMemoryPasskeyCredentialRepository Credentials { get; }
+    public IPasskeyCredentialRepository Credentials { get; }
     public IPublicKeySetRegistrar Registrar { get; }
     public List<PublicKeySetData> Registered { get; } = new List<PublicKeySetData>();
     public Exception? RegistrarThrows { get; set; }
