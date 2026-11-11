@@ -30,6 +30,10 @@ public sealed class PasskeyFixture
                 throw RegistrarThrows;
             }
             Accepted[keySet.KeySetHandle] = keySet;
+            if (RegistrarThrowsAfterStoring is not null)
+            {
+                throw RegistrarThrowsAfterStoring;
+            }
             return keySet;
         });
         Registrar.Resolve(Arg.Any<string>()).Returns(callInfo =>
@@ -61,6 +65,9 @@ public sealed class PasskeyFixture
     public Dictionary<string, PublicKeySetData> Accepted { get; } = new Dictionary<string, PublicKeySetData>(StringComparer.Ordinal);
 
     public Exception? ResolveThrows { get; set; }
+
+    /// <summary>Thrown by <c>Register</c> after it has stored the key set: a registrar that commits and then faults.</summary>
+    public Exception? RegistrarThrowsAfterStoring { get; set; }
 
     /// <summary>Runs inside the registrar's <c>Register</c>, before it answers: the window in which a saved credential is still pending.</summary>
     public Action<PublicKeySetData>? DuringRegister { get; set; }

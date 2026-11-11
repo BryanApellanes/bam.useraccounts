@@ -1,6 +1,7 @@
 using Bam.DependencyInjection;
 using Bam.Encryption;
 using Bam.Protocol.Data;
+using Bam.Protocol.Data.Profile;
 using Bam.Protocol.Profile;
 using Bam.Test;
 using Bam.UserAccounts.Passkeys;
@@ -718,6 +719,114 @@ public class PasskeyCeremonyShould : UnitTestMenuContainer
         .UnlessItFailed();
     }
 
+    [UnitTest]
+    public void KeepTheRowWhenTheRegistrarFaultsAfterStoringTheKeySet()
+    {
+        After.Setup(reg => reg.Set(new PasskeyFixture()))
+        .When<PasskeyFixture>("meets a registrar that stores the key set and then faults", (fixture, reg) =>
+        {
+            SyntheticAuthenticator committed = new SyntheticAuthenticator();
+            fixture.RegistrarThrowsAfterStoring = new TimeoutException("registrar timed out after committing");
+            Exception? reported = null;
+            try
+            {
+                fixture.Register(committed);
+            }
+            catch (Exception e)
+            {
+                reported = e;
+            }
+            fixture.RegistrarThrowsAfterStoring = null;
+            PasskeyCredentialData? kept = fixture.Credentials.FindByCredentialId(committed.CredentialIdBase64Url);
+            bool keptPending = kept?.Pending ?? false;
+            kept!.CreatedUtc = DateTime.UtcNow.Subtract(PasskeyCeremony.PendingCredentialGrace).AddMinutes(-1);
+            PasskeyRegistrationResult retry = fixture.Register(new SyntheticAuthenticator());
+            committed.SignCount = 2;
+            PasskeySignInResult signIn = fixture.SignIn(committed);
+
+            // The registrar cannot be asked after its fault: the row is left alone, not removed.
+            SyntheticAuthenticator unknown = new SyntheticAuthenticator();
+            fixture.RegistrarThrows = new InvalidOperationException("registrar offline");
+            fixture.ResolveThrows = new InvalidOperationException("registrar offline");
+            Exception? offline = null;
+            try
+            {
+                fixture.Register(unknown, "offline-person");
+            }
+            catch (Exception e)
+            {
+                offline = e;
+            }
+            fixture.RegistrarThrows = null;
+            fixture.ResolveThrows = null;
+            PasskeyCredentialData? leftAlone = fixture.Credentials.FindByCredentialId(unknown.CredentialIdBase64Url);
+
+            // A stale pending row that carries the registered key but was never marked as the key
+            // set is not an accepted credential: it is removed, not activated.
+            PasskeyCredentialData unmarked = PendingRow("unmarked-person", "unmarked-cred", DateTime.UtcNow.Subtract(PasskeyCeremony.PendingCredentialGrace).AddMinutes(-1));
+            unmarked.IsRegisteredKeySet = false;
+            fixture.Accepted["unmarked-person"] = new PublicKeySetData { KeySetHandle = "unmarked-person", PublicEccKey = unmarked.PublicKeyPem };
+            fixture.Credentials.Save(unmarked);
+            fixture.RegistrarThrows = new PublicKeySetConflictException("unmarked-person");
+            fixture.Register(new SyntheticAuthenticator(), "unmarked-person");
+            fixture.RegistrarThrows = null;
+            bool unmarkedRemains = fixture.Credentials.FindByCredentialId("unmarked-cred") is not null;
+            return new CommittedFaultOutcome(reported, kept is not null, keptPending, retry, fixture.Credentials.FindByCredentialId(committed.CredentialIdBase64Url), signIn,
+                offline, leftAlone, unmarkedRemains);
+        })
+        .TheTest
+        .ShouldPass<CommittedFaultOutcome>((because, outcome) =>
+        {
+            because.ItsTrue("the registrar's fault is reported", outcome.Reported is TimeoutException);
+            because.ItsTrue("the row of the key set the registrar stored is kept, pending", outcome.RowKept && outcome.KeptPending);
+            because.ItsTrue("a later registration for the handle activates it", outcome.Settled is not null && !outcome.Settled.Pending);
+            because.ItsTrue("and is itself refused", !outcome.Retry.Success && outcome.Retry.Failure == PasskeyVerificationFailure.HandleAlreadyRegistered);
+            because.ItsTrue("the person signs in with the passkey they created", outcome.SignIn.Success && outcome.SignIn.PersonHandle == PasskeyFixture.Handle);
+            because.ItsTrue("when the registrar cannot be asked, its fault is still the one reported", outcome.Offline is InvalidOperationException && outcome.Offline.Message == "registrar offline");
+            because.ItsTrue("and the row is left pending rather than removed", outcome.LeftAlone is not null && outcome.LeftAlone.Pending);
+            because.ItsTrue("a stale pending row not marked as the key set is removed even when it carries the registered key", !outcome.UnmarkedRemains);
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    [UnitTest]
+    public void FlagASignCountRegressionOnlyForTheKeyHolder()
+    {
+        After.Setup(reg => reg.Set(new PasskeyFixture()))
+        .When<PasskeyFixture>("sends a low counter signed by another key, then by the credential's key", (fixture, reg) =>
+        {
+            SyntheticAuthenticator owner = new SyntheticAuthenticator();
+            fixture.Register(owner);
+            owner.SignCount = 5;
+            PasskeySignInResult first = fixture.SignIn(owner);
+
+            SyntheticAuthenticator imposter = new SyntheticAuthenticator();
+            imposter.CredentialId = owner.CredentialId;
+            imposter.SignCount = 1;
+            PasskeySignInResult forged = fixture.SignIn(imposter);
+            PasskeyCredentialData? afterForgery = fixture.Credentials.FindByCredentialId(owner.CredentialIdBase64Url);
+            bool flaggedByForgery = afterForgery?.SignCountRegressed ?? true;
+            long countAfterForgery = afterForgery?.SignCount ?? -1;
+
+            owner.SignCount = 5;
+            PasskeySignInResult regressed = fixture.SignIn(owner);
+            bool flaggedByOwner = fixture.Credentials.FindByCredentialId(owner.CredentialIdBase64Url)?.SignCountRegressed ?? false;
+            return new CounterOutcome(first, forged, flaggedByForgery, countAfterForgery, regressed, flaggedByOwner);
+        })
+        .TheTest
+        .ShouldPass<CounterOutcome>((because, outcome) =>
+        {
+            because.ItsTrue("the owner signs in and the counter is recorded", outcome.First.Success);
+            because.ItsTrue("a low counter under another key is an invalid signature", !outcome.Forged.Success && outcome.Forged.Failure == PasskeyVerificationFailure.InvalidSignature);
+            because.ItsTrue("and does not flag the credential or move its counter", !outcome.FlaggedByForgery && outcome.CountAfterForgery == 5);
+            because.ItsTrue("a counter that does not advance under the credential's own key is a regression", !outcome.Regressed.Success && outcome.Regressed.Failure == PasskeyVerificationFailure.SignCountRegressed);
+            because.ItsTrue("and flags the credential", outcome.FlaggedByOwner);
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
     private static SyntheticAuthenticator Bump(SyntheticAuthenticator authenticator)
     {
         authenticator.SignCount++;
@@ -751,6 +860,9 @@ public class PasskeyCeremonyShould : UnitTestMenuContainer
         PasskeyRegistrationResult RetryWhileFresh, bool PendingAfterFreshRetry, PasskeyRegistrationResult RetryRegistrarOffline, bool KeptWhileOffline, PasskeyRegistrationResult RetryWhenStale,
         PasskeyCredentialData? Settled, PasskeySignInResult AfterSettling, int RegistrarCalls, PasskeyRegistrationResult AcceptedAfterRowWasRemoved, PasskeyCredentialData? SavedAgain,
         PasskeySignInResult SavedAgainSignIn);
+    private sealed record CommittedFaultOutcome(Exception? Reported, bool RowKept, bool KeptPending, PasskeyRegistrationResult Retry, PasskeyCredentialData? Settled, PasskeySignInResult SignIn,
+        Exception? Offline, PasskeyCredentialData? LeftAlone, bool UnmarkedRemains);
+    private sealed record CounterOutcome(PasskeySignInResult First, PasskeySignInResult Forged, bool FlaggedByForgery, long CountAfterForgery, PasskeySignInResult Regressed, bool FlaggedByOwner);
     private sealed record CreationOutcome(PasskeyCreationOptions Options, string Json);
     private sealed record RegistrationOutcome(PasskeyFixture Fixture, SyntheticAuthenticator Authenticator, PasskeyCreationOptions Creation, PasskeyRegistrationResult Result, PasskeyCredentialData? Stored, PasskeyRegistrationResult Again);
     private sealed record SecondOutcome(PasskeyFixture Fixture, SyntheticAuthenticator First, PasskeyRegistrationResult FirstResult, string UserHandle, PasskeyCreationOptions SignUpAgain,

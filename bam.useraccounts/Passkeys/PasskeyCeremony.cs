@@ -353,17 +353,26 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
             }
             catch (Exception)
             {
-                // A fault, not a policy answer: never leave a key-set-marked row behind for a
-                // key the registrar did not accept.  If the removal faults too, the original
-                // fault is the one to report; the row is still pending, so it is inert and the
-                // next registration for the handle reaps it.
+                // A fault, not a policy answer, and not proof of a refusal either: the registrar
+                // may have stored the key set before it faulted.  So the registrar is asked.
+                // Only when it answers that it does not hold this key is the row removed.  When
+                // it holds the key, or cannot be asked, the row stays pending (inert) and a later
+                // registration for the handle settles it.  Whatever happens here, the registrar's
+                // fault is the one reported.
                 try
                 {
-                    _credentials.Remove(personHandle, credential.CredentialId);
+                    if (IsRegisteredKeySetOf(stored))
+                    {
+                        Log.Warn("Passkey registration for {0}: the registrar faulted but holds the key of credential {1}; the row is kept pending", personHandle, credential.CredentialId);
+                    }
+                    else
+                    {
+                        _credentials.Remove(personHandle, credential.CredentialId);
+                    }
                 }
-                catch (Exception removeFault)
+                catch (Exception cleanupFault)
                 {
-                    Log.Warn("Passkey registration for {0}: removing the pending credential {1} after a registrar fault failed ({2})", personHandle, credential.CredentialId, removeFault.Message);
+                    Log.Warn("Passkey registration for {0}: the pending credential {1} is left as it is after a registrar fault ({2})", personHandle, credential.CredentialId, cleanupFault.Message);
                 }
                 throw;
             }

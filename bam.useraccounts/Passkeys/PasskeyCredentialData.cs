@@ -58,7 +58,7 @@ public class PasskeyCredentialData : KeyedAuditRepoData
     /// True from the moment the row is saved until <c>IPublicKeySetRegistrar</c> has accepted
     /// its key as the person's key set.  A pending credential is not usable: it cannot sign in
     /// or confirm an account, and it is not listed as one of the person's passkeys.  A pending
-    /// row left behind by a stopped process is removed by the next registration for its handle.
+    /// row left behind by a stopped process is settled by a later registration for its handle: activated when the registrar holds its key, removed otherwise.
     /// </summary>
     public bool Pending { get; set; }
 

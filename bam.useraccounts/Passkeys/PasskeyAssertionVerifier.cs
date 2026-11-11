@@ -79,11 +79,6 @@ public sealed class PasskeyAssertionVerifier
             return PasskeyVerification.Fail(PasskeyVerificationFailure.UnknownCredential, "assertion user handle does not match the credential's user handle.");
         }
 
-        if (credential.SignCount > 0 && authenticatorData!.SignCount <= credential.SignCount)
-        {
-            return PasskeyVerification.Fail(PasskeyVerificationFailure.SignCountRegressed, $"sign counter {authenticatorData.SignCount} did not advance past {credential.SignCount}.");
-        }
-
         byte[]? signature = PasskeyEncoding.TryDecode(response.Response.Signature);
         if (signature is null || signature.Length == 0)
         {
@@ -119,6 +114,14 @@ public sealed class PasskeyAssertionVerifier
         if (!verification.Success)
         {
             return PasskeyVerification.Fail(PasskeyVerificationFailure.InvalidSignature, "signature does not verify: " + verification.Message);
+        }
+
+        // The counter is judged last, after the signature: a regression is a statement about the
+        // authenticator that holds the credential's key, and it flags the credential.  Anyone
+        // who knows a credential id can send a low counter; only the key holder can sign one.
+        if (credential.SignCount > 0 && authenticatorData.SignCount <= credential.SignCount)
+        {
+            return PasskeyVerification.Fail(PasskeyVerificationFailure.SignCountRegressed, $"sign counter {authenticatorData.SignCount} did not advance past {credential.SignCount}.");
         }
         return PasskeyVerification.Ok(authenticatorData);
     }
