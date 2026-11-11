@@ -77,15 +77,31 @@ public class PasskeyCredentialRepositoriesShould : UnitTestMenuContainer
         pending.Pending = true;
         repository.Save(pending);
         bool savedPending = repository.FindByCredentialId("cred-c1")?.Pending ?? false;
-        bool activated = repository.Activate("cred-c1");
+        bool activatedForAnother = repository.Activate("alice", "cred-c1");
+        bool pendingAfterForeignActivation = repository.FindByCredentialId("cred-c1")?.Pending ?? false;
+        bool activated = repository.Activate("carol", "cred-c1");
         bool pendingAfterActivation = repository.FindByCredentialId("cred-c1")?.Pending ?? true;
-        bool activatedUnknown = repository.Activate("cred-zz");
+        bool activatedUnknown = repository.Activate("carol", "cred-zz");
 
-        bool removed = repository.Remove("cred-a2");
-        bool removedAgain = repository.Remove("cred-a2");
+        bool duplicateRefused = false;
+        try
+        {
+            repository.Save(Credential("mallory", "cred-b1", "uh-mallory", start.AddMinutes(4)));
+        }
+        catch (PasskeyCredentialConflictException)
+        {
+            duplicateRefused = true;
+        }
+        string? ownerAfterDuplicate = repository.FindByCredentialId("cred-b1")?.PersonHandle;
+        bool removedForAnother = repository.Remove("bob", "cred-a2");
+        bool stillThereAfterForeignRemove = repository.FindByCredentialId("cred-a2") is not null;
+
+        bool removed = repository.Remove("alice", "cred-a2");
+        bool removedAgain = repository.Remove("alice", "cred-a2");
         int remaining = repository.FindByHandle("alice").Count;
         return new CustodyOutcome(found, missing, alices, byUserHandle, used, flagged, removed, removedAgain, remaining,
-            new ActivationOutcome(savedPending, activated, pendingAfterActivation, activatedUnknown));
+            new ActivationOutcome(savedPending, activated, pendingAfterActivation, activatedUnknown),
+            new OwnershipOutcome(activatedForAnother, pendingAfterForeignActivation, duplicateRefused, ownerAfterDuplicate, removedForAnother, stillThereAfterForeignRemove));
     }
 
     private static void AssertCustody(Because because, CustodyOutcome outcome)
@@ -99,6 +115,10 @@ public class PasskeyCredentialRepositoriesShould : UnitTestMenuContainer
         because.ItsTrue("keeps a credential pending as saved", outcome.Activation.SavedPending);
         because.ItsTrue("activation clears the pending mark", outcome.Activation.Activated && !outcome.Activation.PendingAfterActivation);
         because.ItsTrue("activating an unknown credential reports false", !outcome.Activation.ActivatedUnknown);
+        because.ItsTrue("activation under another person's handle does nothing", !outcome.Ownership.ActivatedForAnother && outcome.Ownership.PendingAfterForeignActivation);
+        because.ItsTrue("a credential id that is already stored is refused", outcome.Ownership.DuplicateRefused);
+        because.ItsTrue("and the stored row keeps its owner", outcome.Ownership.OwnerAfterDuplicate == "bob");
+        because.ItsTrue("removal under another person's handle does nothing", !outcome.Ownership.RemovedForAnother && outcome.Ownership.StillThereAfterForeignRemove);
         because.ItsTrue("removes a credential once", outcome.Removed && !outcome.RemovedAgain);
         because.ItsTrue("removal leaves the person's other credential", outcome.Remaining == 1);
     }
@@ -156,7 +176,9 @@ public class PasskeyCredentialRepositoriesShould : UnitTestMenuContainer
 
     private sealed record CustodyOutcome(PasskeyCredentialData? Found, PasskeyCredentialData? Missing, IReadOnlyList<PasskeyCredentialData> Alices,
         IReadOnlyList<PasskeyCredentialData> ByUserHandle, PasskeyCredentialData? Used, PasskeyCredentialData? Flagged, bool Removed, bool RemovedAgain, int Remaining,
-        ActivationOutcome Activation);
+        ActivationOutcome Activation, OwnershipOutcome Ownership);
+
+    private sealed record OwnershipOutcome(bool ActivatedForAnother, bool PendingAfterForeignActivation, bool DuplicateRefused, string? OwnerAfterDuplicate, bool RemovedForAnother, bool StillThereAfterForeignRemove);
 
     private sealed record ActivationOutcome(bool SavedPending, bool Activated, bool PendingAfterActivation, bool ActivatedUnknown);
 }

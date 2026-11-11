@@ -592,6 +592,132 @@ public class PasskeyCeremonyShould : UnitTestMenuContainer
         .UnlessItFailed();
     }
 
+    [UnitTest]
+    public void RefuseACredentialIdSavedByAConcurrentRegistration()
+    {
+        After.Setup(reg => reg.Set(new PasskeyFixture(credentials: new FaultingPasskeyCredentialRepository(new InMemoryPasskeyCredentialRepository()))))
+        .When<PasskeyFixture>("races a second sign-up with the same credential id past the id check", (fixture, reg) =>
+        {
+            FaultingPasskeyCredentialRepository custody = (FaultingPasskeyCredentialRepository)fixture.Credentials;
+            SyntheticAuthenticator shared = new SyntheticAuthenticator();
+            PasskeyRegistrationResult? racing = null;
+            List<PasskeySignInResult> during = new List<PasskeySignInResult>();
+            string? ownerDuring = null;
+            bool pendingDuring = false;
+            fixture.DuringRegister = keySet =>
+            {
+                if (keySet.KeySetHandle != "alice-device-key")
+                {
+                    return;
+                }
+                // The victim handle's row is saved and its registrar call is in flight.  A second
+                // sign-up for another handle presents the same credential id, having read custody
+                // before that row existed, and its own registrar call would be accepted.
+                Exception? victimAnswer = fixture.RegistrarThrows;
+                fixture.RegistrarThrows = null;
+                custody.StaleReadOf = shared.CredentialIdBase64Url;
+                racing = fixture.Register(shared, "mallory");
+                fixture.RegistrarThrows = victimAnswer;
+                shared.SignCount = 2;
+                during.Add(fixture.SignIn(shared, null));
+                during.Add(fixture.SignIn(shared, "alice-device-key"));
+                during.Add(fixture.SignIn(shared, "mallory"));
+                PasskeyCredentialData? row = custody.FindByCredentialId(shared.CredentialIdBase64Url);
+                ownerDuring = row?.PersonHandle;
+                pendingDuring = row?.Pending ?? false;
+            };
+            fixture.RegistrarThrows = new PublicKeySetConflictException("alice-device-key");
+            PasskeyRegistrationResult victim = fixture.Register(shared, "alice-device-key");
+            fixture.DuringRegister = null;
+            return new ConcurrentIdOutcome(racing, during, ownerDuring, pendingDuring, victim,
+                custody.FindByCredentialId(shared.CredentialIdBase64Url) is not null,
+                custody.FindByHandle("alice-device-key").Count, custody.FindByHandle("mallory").Count, fixture.Registered.Count);
+        })
+        .TheTest
+        .ShouldPass<ConcurrentIdOutcome>((because, outcome) =>
+        {
+            because.ItsTrue("the racing sign-up is refused as a credential that is already registered", outcome.Racing is not null && !outcome.Racing.Success && outcome.Racing.Failure == PasskeyVerificationFailure.CredentialAlreadyRegistered);
+            because.ItsTrue("it never reaches the registrar", outcome.RegistrarCalls == 1);
+            because.ItsTrue("the row in custody is still the first registration's, still pending", outcome.OwnerDuring == "alice-device-key" && outcome.PendingDuring);
+            because.ItsTrue("no sign-in succeeds with the shared credential, as anyone", outcome.During.Count == 3 && outcome.During.All(result => !result.Success && result.PersonHandle is null));
+            because.ItsTrue("the first registration gets the registrar's refusal", !outcome.Victim.Success && outcome.Victim.Failure == PasskeyVerificationFailure.HandleAlreadyRegistered);
+            because.ItsTrue("nothing is left in custody under either handle", !outcome.RowRemains && outcome.VictimRows == 0 && outcome.RacerRows == 0);
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    [UnitTest]
+    public void NeverLoseTheCredentialOfAnAcceptedKeySet()
+    {
+        After.Setup(reg => reg.Set(new PasskeyFixture(credentials: new FaultingPasskeyCredentialRepository(new InMemoryPasskeyCredentialRepository()))))
+        .When<PasskeyFixture>("faults or loses the row after the registrar accepted the key", (fixture, reg) =>
+        {
+            FaultingPasskeyCredentialRepository custody = (FaultingPasskeyCredentialRepository)fixture.Credentials;
+            SyntheticAuthenticator first = new SyntheticAuthenticator();
+            custody.ActivateThrows = new InvalidOperationException("store hiccup");
+            Exception? reported = null;
+            try
+            {
+                fixture.Register(first);
+            }
+            catch (Exception e)
+            {
+                reported = e;
+            }
+            custody.ActivateThrows = null;
+            PasskeyCredentialData? afterFault = custody.FindByCredentialId(first.CredentialIdBase64Url);
+            bool pendingAfterFault = afterFault?.Pending ?? false;
+            bool registrarHoldsHandle = fixture.Accepted.ContainsKey(PasskeyFixture.Handle);
+            first.SignCount = 2;
+            PasskeySignInResult whilePending = fixture.SignIn(first);
+
+            PasskeyRegistrationResult retryWhileFresh = fixture.Register(new SyntheticAuthenticator());
+            bool pendingAfterFreshRetry = custody.FindByCredentialId(first.CredentialIdBase64Url)?.Pending ?? false;
+
+            afterFault!.CreatedUtc = DateTime.UtcNow.Subtract(PasskeyCeremony.PendingCredentialGrace).AddMinutes(-1);
+            fixture.ResolveThrows = new InvalidOperationException("registrar offline");
+            PasskeyRegistrationResult retryRegistrarOffline = fixture.Register(new SyntheticAuthenticator());
+            PasskeyCredentialData? afterOffline = custody.FindByCredentialId(first.CredentialIdBase64Url);
+            bool keptWhileOffline = afterOffline is not null && afterOffline.Pending;
+            fixture.ResolveThrows = null;
+
+            PasskeyRegistrationResult retryWhenStale = fixture.Register(new SyntheticAuthenticator());
+            PasskeyCredentialData? settled = custody.FindByCredentialId(first.CredentialIdBase64Url);
+            first.SignCount = 3;
+            PasskeySignInResult afterSettling = fixture.SignIn(first);
+
+            PasskeyFixture other = new PasskeyFixture();
+            SyntheticAuthenticator reaped = new SyntheticAuthenticator();
+            other.DuringRegister = keySet => other.Credentials.Remove(PasskeyFixture.Handle, reaped.CredentialIdBase64Url);
+            PasskeyRegistrationResult acceptedAfterRowWasRemoved = other.Register(reaped);
+            PasskeyCredentialData? savedAgain = other.Credentials.FindByCredentialId(reaped.CredentialIdBase64Url);
+            reaped.SignCount = 2;
+            PasskeySignInResult savedAgainSignIn = other.SignIn(reaped);
+
+            return new AcceptedOutcome(reported, afterFault is not null, pendingAfterFault, registrarHoldsHandle, whilePending, retryWhileFresh, pendingAfterFreshRetry,
+                retryRegistrarOffline, keptWhileOffline, retryWhenStale, settled, afterSettling, fixture.Registered.Count, acceptedAfterRowWasRemoved, savedAgain, savedAgainSignIn);
+        })
+        .TheTest
+        .ShouldPass<AcceptedOutcome>((because, outcome) =>
+        {
+            because.ItsTrue("the activation fault is reported", outcome.Reported is InvalidOperationException && outcome.Reported.Message == "store hiccup");
+            because.ItsTrue("the registrar holds the handle", outcome.RegistrarHoldsHandle);
+            because.ItsTrue("so the row is kept, pending", outcome.RowKept && outcome.PendingAfterFault);
+            because.ItsTrue("a pending row still cannot sign in", !outcome.WhilePending.Success);
+            because.ItsTrue("a retry while the row is fresh is refused and changes nothing", !outcome.RetryWhileFresh.Success && outcome.RetryWhileFresh.Failure == PasskeyVerificationFailure.HandleAlreadyRegistered && outcome.PendingAfterFreshRetry);
+            because.ItsTrue("a stale row is left alone when the registrar cannot be asked", !outcome.RetryRegistrarOffline.Success && outcome.KeptWhileOffline);
+            because.ItsTrue("a stale row whose key the registrar holds is activated, not removed", outcome.Settled is not null && !outcome.Settled.Pending);
+            because.ItsTrue("the retry that settled it is refused: the handle has its passkey", !outcome.RetryWhenStale.Success && outcome.RetryWhenStale.Failure == PasskeyVerificationFailure.HandleAlreadyRegistered);
+            because.ItsTrue("no retry reached the registrar", outcome.RegistrarCalls == 1);
+            because.ItsTrue("the person signs in with the passkey they created", outcome.AfterSettling.Success && outcome.AfterSettling.PersonHandle == PasskeyFixture.Handle);
+            because.ItsTrue("a row removed while the registrar was answering is saved again on acceptance", outcome.AcceptedAfterRowWasRemoved.Success && outcome.AcceptedAfterRowWasRemoved.KeySetRegistered && outcome.SavedAgain is not null && !outcome.SavedAgain.Pending);
+            because.ItsTrue("and signs in", outcome.SavedAgainSignIn.Success);
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
     private static SyntheticAuthenticator Bump(SyntheticAuthenticator authenticator)
     {
         authenticator.SignCount++;
@@ -619,6 +745,12 @@ public class PasskeyCeremonyShould : UnitTestMenuContainer
     private sealed record ReapOutcome(PasskeyRegistrationResult AfterStale, bool StaleRemains, PasskeyRegistrationResult WhileInFlight, bool FreshRemains, PasskeyRegistrationResult OwnerAdds,
         PasskeyCredentialData? OwnerRow, Exception? Reported, PasskeyCredentialData? Survivor, PasskeySignInResult SurvivorSignIn);
     private sealed record UnreadableBindingOutcome(List<PasskeySignInResult> Replaced, PasskeySignInResult Intact, PasskeySignInResult Discoverable);
+    private sealed record ConcurrentIdOutcome(PasskeyRegistrationResult? Racing, List<PasskeySignInResult> During, string? OwnerDuring, bool PendingDuring, PasskeyRegistrationResult Victim,
+        bool RowRemains, int VictimRows, int RacerRows, int RegistrarCalls);
+    private sealed record AcceptedOutcome(Exception? Reported, bool RowKept, bool PendingAfterFault, bool RegistrarHoldsHandle, PasskeySignInResult WhilePending,
+        PasskeyRegistrationResult RetryWhileFresh, bool PendingAfterFreshRetry, PasskeyRegistrationResult RetryRegistrarOffline, bool KeptWhileOffline, PasskeyRegistrationResult RetryWhenStale,
+        PasskeyCredentialData? Settled, PasskeySignInResult AfterSettling, int RegistrarCalls, PasskeyRegistrationResult AcceptedAfterRowWasRemoved, PasskeyCredentialData? SavedAgain,
+        PasskeySignInResult SavedAgainSignIn);
     private sealed record CreationOutcome(PasskeyCreationOptions Options, string Json);
     private sealed record RegistrationOutcome(PasskeyFixture Fixture, SyntheticAuthenticator Authenticator, PasskeyCreationOptions Creation, PasskeyRegistrationResult Result, PasskeyCredentialData? Stored, PasskeyRegistrationResult Again);
     private sealed record SecondOutcome(PasskeyFixture Fixture, SyntheticAuthenticator First, PasskeyRegistrationResult FirstResult, string UserHandle, PasskeyCreationOptions SignUpAgain,

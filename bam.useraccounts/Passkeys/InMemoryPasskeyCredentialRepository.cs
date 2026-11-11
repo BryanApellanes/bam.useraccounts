@@ -15,7 +15,10 @@ public sealed class InMemoryPasskeyCredentialRepository : IPasskeyCredentialRepo
         ArgumentNullException.ThrowIfNull(credential);
         lock (_lock)
         {
-            _byCredentialId[credential.CredentialId] = credential;
+            if (!_byCredentialId.TryAdd(credential.CredentialId, credential))
+            {
+                throw new PasskeyCredentialConflictException(credential.CredentialId);
+            }
             return credential;
         }
     }
@@ -79,11 +82,12 @@ public sealed class InMemoryPasskeyCredentialRepository : IPasskeyCredentialRepo
     }
 
     /// <inheritdoc />
-    public bool Activate(string credentialId)
+    public bool Activate(string personHandle, string credentialId)
     {
         lock (_lock)
         {
-            if (!_byCredentialId.TryGetValue(credentialId, out PasskeyCredentialData? credential))
+            if (!_byCredentialId.TryGetValue(credentialId, out PasskeyCredentialData? credential)
+                || !string.Equals(credential.PersonHandle, personHandle, StringComparison.Ordinal))
             {
                 return false;
             }
@@ -93,10 +97,15 @@ public sealed class InMemoryPasskeyCredentialRepository : IPasskeyCredentialRepo
     }
 
     /// <inheritdoc />
-    public bool Remove(string credentialId)
+    public bool Remove(string personHandle, string credentialId)
     {
         lock (_lock)
         {
+            if (!_byCredentialId.TryGetValue(credentialId, out PasskeyCredentialData? credential)
+                || !string.Equals(credential.PersonHandle, personHandle, StringComparison.Ordinal))
+            {
+                return false;
+            }
             return _byCredentialId.Remove(credentialId);
         }
     }

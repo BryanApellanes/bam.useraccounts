@@ -30,6 +30,10 @@ public sealed class PersistedPasskeyCredentialRepository : IPasskeyCredentialRep
         ArgumentNullException.ThrowIfNull(credential);
         lock (_lock)
         {
+            if (QueryBy(nameof(PasskeyCredentialData.CredentialId), credential.CredentialId).Any())
+            {
+                throw new PasskeyCredentialConflictException(credential.CredentialId);
+            }
             PasskeyCredentialData created = _repository.Create(credential);
             return created ?? credential;
         }
@@ -94,11 +98,12 @@ public sealed class PersistedPasskeyCredentialRepository : IPasskeyCredentialRep
     }
 
     /// <inheritdoc />
-    public bool Activate(string credentialId)
+    public bool Activate(string personHandle, string credentialId)
     {
         lock (_lock)
         {
-            PasskeyCredentialData? credential = QueryBy(nameof(PasskeyCredentialData.CredentialId), credentialId).FirstOrDefault();
+            PasskeyCredentialData? credential = QueryBy(nameof(PasskeyCredentialData.CredentialId), credentialId)
+                .FirstOrDefault(row => string.Equals(row.PersonHandle, personHandle, StringComparison.Ordinal));
             if (credential is null)
             {
                 return false;
@@ -110,12 +115,13 @@ public sealed class PersistedPasskeyCredentialRepository : IPasskeyCredentialRep
     }
 
     /// <inheritdoc />
-    public bool Remove(string credentialId)
+    public bool Remove(string personHandle, string credentialId)
     {
         lock (_lock)
         {
             bool removed = false;
-            foreach (PasskeyCredentialData credential in QueryBy(nameof(PasskeyCredentialData.CredentialId), credentialId).ToList())
+            foreach (PasskeyCredentialData credential in QueryBy(nameof(PasskeyCredentialData.CredentialId), credentialId)
+                .Where(row => string.Equals(row.PersonHandle, personHandle, StringComparison.Ordinal)).ToList())
             {
                 removed |= _repository.Delete(credential);
             }

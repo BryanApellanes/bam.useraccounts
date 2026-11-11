@@ -29,7 +29,16 @@ public sealed class PasskeyFixture
             {
                 throw RegistrarThrows;
             }
+            Accepted[keySet.KeySetHandle] = keySet;
             return keySet;
+        });
+        Registrar.Resolve(Arg.Any<string>()).Returns(callInfo =>
+        {
+            if (ResolveThrows is not null)
+            {
+                throw ResolveThrows;
+            }
+            return Accepted.TryGetValue(callInfo.Arg<string>(), out PublicKeySetData? keySet) ? keySet : null;
         });
         SignatureVerifier = new DetachedSignatureVerifier();
         Ceremony = new PasskeyCeremony(
@@ -47,6 +56,11 @@ public sealed class PasskeyFixture
     public IPublicKeySetRegistrar Registrar { get; }
     public List<PublicKeySetData> Registered { get; } = new List<PublicKeySetData>();
     public Exception? RegistrarThrows { get; set; }
+
+    /// <summary>The key sets the registrar accepted, by handle; what <c>Resolve</c> answers from.</summary>
+    public Dictionary<string, PublicKeySetData> Accepted { get; } = new Dictionary<string, PublicKeySetData>(StringComparer.Ordinal);
+
+    public Exception? ResolveThrows { get; set; }
 
     /// <summary>Runs inside the registrar's <c>Register</c>, before it answers: the window in which a saved credential is still pending.</summary>
     public Action<PublicKeySetData>? DuringRegister { get; set; }

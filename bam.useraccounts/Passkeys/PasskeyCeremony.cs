@@ -48,10 +48,11 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
     private const byte HandleBinding = 0x01;
 
     /// <summary>
-    /// How long a credential row may stay pending (saved, its key not yet accepted by the
-    /// registrar) before the next registration for its handle or credential id removes it.  A
-    /// pending row is never usable; one older than this was left by a process that stopped
-    /// between the save and the registrar's answer.
+    /// How long a credential row may stay pending (saved, not yet activated) before the next
+    /// registration for its handle or credential id settles it: activated when the registrar
+    /// holds its key as the handle's key set, removed otherwise.  A pending row is never usable;
+    /// one older than this was left by a process that stopped, or a store that faulted, between
+    /// the save and the activation.
     /// </summary>
     public static readonly TimeSpan PendingCredentialGrace = TimeSpan.FromMinutes(5);
 
@@ -257,7 +258,7 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
             return RegistrationFailed(personHandle, verification.Failure, verification.Detail);
         }
         ParsedPasskeyCredential credential = verification.Credential;
-        ReapStalePending(personHandle, credential.CredentialId);
+        SettleStalePending(personHandle, credential.CredentialId);
         if (_credentials.FindByCredentialId(credential.CredentialId) is not null)
         {
             return RegistrationFailed(personHandle, PasskeyVerificationFailure.CredentialAlreadyRegistered, "the credential id is already registered.");
@@ -279,13 +280,18 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
         string storedUserHandle = existing.Count > 0 ? existing[0].UserHandle : Base64UrlEncoder.Default.Encode(userHandle.ChallengeBytes);
         bool first = existing.Count == 0;
         PasskeyCredentialData stored = BuildCredential(personHandle, credential, pem, storedUserHandle, isRegisteredKeySet: first);
-        // Save first so a store fault can never leave the handle bound to a key no credential
-        // row carries.  The row is saved pending whenever the registrar still has to accept its
-        // key: a pending row cannot sign in or confirm an account, so nothing is usable under
-        // the handle until the registrar has answered.  It is removed when the registrar
-        // refuses the material.
+        // Save first so the registrar never accepts a key no credential row carries.  The row
+        // is saved pending whenever the registrar still has to accept its key: a pending row
+        // cannot sign in or confirm an account, so nothing is usable under the handle until the
+        // registrar has answered.  It is removed when the registrar refuses the material, and
+        // kept (pending, to be settled later) when anything faults after the registrar accepted.
+        // Custody refuses a credential id that already has a row, so a registration that raced
+        // past the check above stores nothing and touches nobody else's row.
         stored.Pending = first;
-        _credentials.Save(stored);
+        if (!TrySave(stored))
+        {
+            return RegistrationFailed(personHandle, PasskeyVerificationFailure.CredentialAlreadyRegistered, "the credential id was registered while this registration was completing.");
+        }
 
         bool keySetRegistered = false;
         if (first)
@@ -303,7 +309,6 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
             {
                 _registrar.Register(keySet);
                 keySetRegistered = true;
-                Activate(stored);
             }
             catch (PublicKeySetConflictException e)
             {
@@ -311,28 +316,31 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
                 {
                     // The handle already belongs to someone (a device-key key set): sign-up
                     // must not attach a credential to it.
-                    _credentials.Remove(credential.CredentialId);
+                    _credentials.Remove(personHandle, credential.CredentialId);
                     return RegistrationFailed(personHandle, PasskeyVerificationFailure.HandleAlreadyRegistered, e.Message);
                 }
                 // An authenticated person with a device-key key set adds their first passkey:
                 // the existing key set stands and the passkey is an additional credential.
-                _credentials.Remove(credential.CredentialId);
+                _credentials.Remove(personHandle, credential.CredentialId);
                 stored = BuildCredential(personHandle, credential, pem, storedUserHandle, isRegisteredKeySet: false);
-                _credentials.Save(stored);
+                if (!TrySave(stored))
+                {
+                    return RegistrationFailed(personHandle, PasskeyVerificationFailure.CredentialAlreadyRegistered, "the credential id was registered while this registration was completing.");
+                }
             }
             catch (PublicKeySetKeyMaterialConflictException e)
             {
-                _credentials.Remove(credential.CredentialId);
+                _credentials.Remove(personHandle, credential.CredentialId);
                 return RegistrationFailed(personHandle, PasskeyVerificationFailure.CredentialAlreadyRegistered, e.Message);
             }
             catch (RevokedKeyMaterialException e)
             {
-                _credentials.Remove(credential.CredentialId);
+                _credentials.Remove(personHandle, credential.CredentialId);
                 return RegistrationFailed(personHandle, PasskeyVerificationFailure.CredentialAlreadyRegistered, e.Message);
             }
             catch (InvalidPublicKeySetException e)
             {
-                _credentials.Remove(credential.CredentialId);
+                _credentials.Remove(personHandle, credential.CredentialId);
                 return RegistrationFailed(personHandle, PasskeyVerificationFailure.InvalidCredentialKey, e.Message);
             }
             catch (KeySetRegistrationException e)
@@ -340,7 +348,7 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
                 // Any other registrar policy refusal (an unauthorized successor of a revoked
                 // handle, or a refusal added to the registrar later): the handle is not claimable
                 // by this key, and the saved row must not outlive the refusal.
-                _credentials.Remove(credential.CredentialId);
+                _credentials.Remove(personHandle, credential.CredentialId);
                 return RegistrationFailed(personHandle, PasskeyVerificationFailure.HandleAlreadyRegistered, e.Message);
             }
             catch (Exception)
@@ -351,7 +359,7 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
                 // next registration for the handle reaps it.
                 try
                 {
-                    _credentials.Remove(credential.CredentialId);
+                    _credentials.Remove(personHandle, credential.CredentialId);
                 }
                 catch (Exception removeFault)
                 {
@@ -359,6 +367,14 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
                 }
                 throw;
             }
+        }
+
+        // Activation is outside the registrar's try block on purpose: once the registrar has
+        // accepted the key, nothing here may remove the row.  A fault below leaves it pending,
+        // and the next registration for the handle activates it (SettleStalePending).
+        if (keySetRegistered && !Activate(stored))
+        {
+            return RegistrationFailed(personHandle, PasskeyVerificationFailure.CredentialAlreadyRegistered, "the accepted credential could not be activated: its row is gone and its credential id is held by another row.");
         }
 
         return new PasskeyRegistrationResult
@@ -374,16 +390,33 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
     }
 
     /// <summary>
-    /// Makes a saved credential usable once the registrar has accepted its key.  If the pending
-    /// row is gone (reaped as stale while the registrar was answering), it is saved again as an
-    /// accepted credential, so an accepted key set never ends up without its credential row.
+    /// Makes the credential this registration saved usable once the registrar has accepted its
+    /// key.  The row is addressed by person and credential id, so only this registration's row
+    /// can be activated.  If the pending row is gone (removed as stale while the registrar was
+    /// answering), it is saved again as an accepted credential.
     /// </summary>
-    private void Activate(PasskeyCredentialData stored)
+    /// <returns>False when the row is gone and cannot be saved again because another row now holds its credential id.</returns>
+    private bool Activate(PasskeyCredentialData stored)
     {
-        stored.Pending = false;
-        if (!_credentials.Activate(stored.CredentialId))
+        if (_credentials.Activate(stored.PersonHandle, stored.CredentialId))
         {
-            _credentials.Save(stored);
+            stored.Pending = false;
+            return true;
+        }
+        stored.Pending = false;
+        return TrySave(stored);
+    }
+
+    private bool TrySave(PasskeyCredentialData credential)
+    {
+        try
+        {
+            _credentials.Save(credential);
+            return true;
+        }
+        catch (PasskeyCredentialConflictException)
+        {
+            return false;
         }
     }
 
@@ -393,11 +426,15 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
     }
 
     /// <summary>
-    /// Removes pending rows older than <see cref="PendingCredentialGrace"/> under the handle or
-    /// the credential id: leftovers of a process that stopped between the save and the
-    /// registrar's answer.  Without this a stopped sign-up would hold its handle forever.
+    /// Settles pending rows older than <see cref="PendingCredentialGrace"/> under the handle or
+    /// the credential id: leftovers of a process that stopped, or a store that faulted, between
+    /// the save and the activation.  The registrar decides which way.  A row whose key the
+    /// registrar holds as its handle's key set was accepted, so it is activated (removing it
+    /// would lose the handle: the registrar refuses every later key for it).  A row whose key
+    /// the registrar does not hold was never accepted, so it is removed (keeping it would hold
+    /// the handle forever).  When the registrar cannot be asked, the row is left for next time.
     /// </summary>
-    private void ReapStalePending(string personHandle, string credentialId)
+    private void SettleStalePending(string personHandle, string credentialId)
     {
         DateTime cutoff = DateTime.UtcNow.Subtract(PendingCredentialGrace);
         List<PasskeyCredentialData> candidates = _credentials.FindByHandle(personHandle).ToList();
@@ -408,9 +445,48 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
         }
         foreach (PasskeyCredentialData row in candidates.Where(row => row.Pending && row.CreatedUtc < cutoff))
         {
-            Log.Warn("Removing stale pending passkey credential {0} of {1} (saved {2:o}, never accepted by the registrar)", row.CredentialId, row.PersonHandle, row.CreatedUtc);
-            _credentials.Remove(row.CredentialId);
+            bool accepted;
+            try
+            {
+                accepted = IsRegisteredKeySetOf(row);
+            }
+            catch (Exception e)
+            {
+                Log.Warn("Stale pending passkey credential {0} of {1} left as it is: the registrar could not be asked ({2})", row.CredentialId, row.PersonHandle, e.Message);
+                continue;
+            }
+            if (accepted)
+            {
+                Log.Warn("Activating stale pending passkey credential {0} of {1} (saved {2:o}): the registrar holds its key as the handle's key set", row.CredentialId, row.PersonHandle, row.CreatedUtc);
+                _credentials.Activate(row.PersonHandle, row.CredentialId);
+            }
+            else
+            {
+                Log.Warn("Removing stale pending passkey credential {0} of {1} (saved {2:o}, never accepted by the registrar)", row.CredentialId, row.PersonHandle, row.CreatedUtc);
+                _credentials.Remove(row.PersonHandle, row.CredentialId);
+            }
         }
+    }
+
+    /// <summary>
+    /// Whether the registrar holds the row's key as the key set of the row's handle.  Keys are
+    /// compared by canonical fingerprint, never by PEM text.
+    /// </summary>
+    private bool IsRegisteredKeySetOf(PasskeyCredentialData row)
+    {
+        if (!row.IsRegisteredKeySet)
+        {
+            return false;
+        }
+        PublicKeySetData? keySet = _registrar.Resolve(row.PersonHandle);
+        string? rowKey = PublicKeyFingerprint.Of(row.PublicKeyPem);
+        if (keySet is null || rowKey is null)
+        {
+            return false;
+        }
+        string? registeredRsa = string.IsNullOrEmpty(keySet.PublicRsaKey) ? null : PublicKeyFingerprint.Of(keySet.PublicRsaKey);
+        string? registeredEcc = string.IsNullOrEmpty(keySet.PublicEccKey) ? null : PublicKeyFingerprint.Of(keySet.PublicEccKey);
+        return string.Equals(rowKey, registeredRsa, StringComparison.Ordinal) || string.Equals(rowKey, registeredEcc, StringComparison.Ordinal);
     }
 
     private static bool TryReadBinding(byte[]? binding, out string? boundHandle)

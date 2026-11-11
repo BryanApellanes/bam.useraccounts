@@ -19,11 +19,21 @@ public sealed class FaultingPasskeyCredentialRepository : IPasskeyCredentialRepo
 
     public Exception? RemoveThrows { get; set; }
 
+    public Exception? ActivateThrows { get; set; }
+
+    /// <summary>
+    /// A credential id <see cref="FindByCredentialId"/> answers null for until the next
+    /// <see cref="Save"/>: a registration that read custody before another registration saved
+    /// the same credential id.
+    /// </summary>
+    public string? StaleReadOf { get; set; }
+
     public int SaveCalls { get; private set; }
 
     public PasskeyCredentialData Save(PasskeyCredentialData credential)
     {
         SaveCalls++;
+        StaleReadOf = null;
         if (SaveThrows is not null)
         {
             throw SaveThrows;
@@ -31,7 +41,10 @@ public sealed class FaultingPasskeyCredentialRepository : IPasskeyCredentialRepo
         return _inner.Save(credential);
     }
 
-    public PasskeyCredentialData? FindByCredentialId(string credentialId) => _inner.FindByCredentialId(credentialId);
+    public PasskeyCredentialData? FindByCredentialId(string credentialId)
+    {
+        return string.Equals(credentialId, StaleReadOf, StringComparison.Ordinal) ? null : _inner.FindByCredentialId(credentialId);
+    }
 
     public IReadOnlyList<PasskeyCredentialData> FindByHandle(string personHandle) => _inner.FindByHandle(personHandle);
 
@@ -41,14 +54,21 @@ public sealed class FaultingPasskeyCredentialRepository : IPasskeyCredentialRepo
 
     public void FlagSignCountRegression(string credentialId) => _inner.FlagSignCountRegression(credentialId);
 
-    public bool Activate(string credentialId) => _inner.Activate(credentialId);
+    public bool Activate(string personHandle, string credentialId)
+    {
+        if (ActivateThrows is not null)
+        {
+            throw ActivateThrows;
+        }
+        return _inner.Activate(personHandle, credentialId);
+    }
 
-    public bool Remove(string credentialId)
+    public bool Remove(string personHandle, string credentialId)
     {
         if (RemoveThrows is not null)
         {
             throw RemoveThrows;
         }
-        return _inner.Remove(credentialId);
+        return _inner.Remove(personHandle, credentialId);
     }
 }

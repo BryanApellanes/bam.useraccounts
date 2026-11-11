@@ -133,7 +133,7 @@ public class PasskeyAccountConfirmationShould : UnitTestMenuContainer
             harness.Authenticator.SignCount = 9;
             ConfirmationChallenge pendingChallenge = harness.Confirmation.CreateChallenge(PasskeyFixture.Handle);
             ConfirmationResult pendingCredential = harness.Confirmation.VerifySignedChallenge(PasskeyFixture.Handle, harness.Answer(pendingChallenge));
-            harness.Fixture.Credentials.Activate(harness.Authenticator.CredentialIdBase64Url);
+            harness.Fixture.Credentials.Activate(PasskeyFixture.Handle, harness.Authenticator.CredentialIdBase64Url);
             harness.Authenticator.SignCount = 10;
             ConfirmationChallenge activatedChallenge = harness.Confirmation.CreateChallenge(PasskeyFixture.Handle);
             ConfirmationResult activatedCredential = harness.Confirmation.VerifySignedChallenge(PasskeyFixture.Handle, harness.Answer(activatedChallenge));
