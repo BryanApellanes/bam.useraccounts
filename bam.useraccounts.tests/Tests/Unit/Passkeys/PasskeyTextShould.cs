@@ -40,7 +40,12 @@ public class PasskeyTextShould : UnitTestMenuContainer
                 PasskeyText.Printable("abcdef", 3),
                 PasskeyText.Printable("abcdef", 0),
                 PasskeyText.Printable("ab" + U(0x1F511) + "", 3),
-                PasskeyText.Printable("abcdef", 6));
+                PasskeyText.Printable("abcdef", 6),
+                NotIdempotent(),
+                PasskeyText.Printable(new string('x', 400) + "...(+7 more)", 400),
+                PasskeyText.Printable(new string('x', 400) + " and ...(+7 more) then more text", 400),
+                PasskeyText.Printable(new string('x', 400) + "...(+ more)", 400),
+                PasskeyText.Printable(new string('x', 500) + "...(+7 more)", 400));
         })
         .TheTest
         .ShouldPass<PrintableOutcome>((because, outcome) =>
@@ -60,6 +65,11 @@ public class PasskeyTextShould : UnitTestMenuContainer
             because.ItsTrue("a cap below one keeps one character", outcome.ZeroCap == "a...(+5 more)");
             because.ItsTrue("a surrogate pair split by the cap does not leave half a character", outcome.SplitPair == "ab?...(+1 more)");
             because.ItsTrue("text exactly at the cap gets no note", outcome.ExactlyAtCap == "abcdef");
+            because.ItsTrue("a second pass with the same cap changes nothing: " + outcome.NotIdempotent, outcome.NotIdempotent.Length == 0);
+            because.ItsTrue("text that already ends in a note within the allowance is kept whole", outcome.AlreadyCut == new string('x', 400) + "...(+7 more)");
+            because.ItsTrue("a note in the middle does not exempt the text from the cap", outcome.NoteInMiddle == new string('x', 400) + "...(+32 more)");
+            because.ItsTrue("a note without digits is not a note", outcome.NoteWithoutDigits == new string('x', 400) + "...(+11 more)");
+            because.ItsTrue("a note cannot carry more than the allowance past the cap", outcome.NoteTooFar == new string('x', 400) + "...(+112 more)");
         })
         .SoBeHappy()
         .UnlessItFailed();
@@ -147,6 +157,18 @@ public class PasskeyTextShould : UnitTestMenuContainer
                     .Verify(new ConfirmationChallenge { PersonHandle = "long-detail", ChallengeBytes = longChallenge, ExpiresUtc = DateTime.UtcNow.AddMinutes(1) }, longAssertion, null!)
                     .Message;
 
+                // The Parse methods throw the same exception type with their own messages.
+                string parseMessage = string.Empty;
+                try
+                {
+                    ClientData.Parse(longClientData);
+                }
+                catch (PasskeyFormatException e)
+                {
+                    parseMessage = e.Message;
+                }
+                string directMessage = new PasskeyFormatException("bad\r\n" + Forged + new string('E', 5000)).Message;
+
                 IReadOnlyList<LogEvent> events = logger.Events;
                 List<string> values = events.SelectMany(e => e.MessageVariableValues ?? Array.Empty<string?>()).Where(v => v is not null).Select(v => v!).ToList();
                 return new LogOutcome(
@@ -162,7 +184,9 @@ public class PasskeyTextShould : UnitTestMenuContainer
                     exceptionMessage.Length > PasskeyVerification.MaxDetailLength && !HasLineBreak(exceptionMessage),
                     exceptionMessage.Substring(Math.Max(0, exceptionMessage.LastIndexOf("...(+", StringComparison.Ordinal))),
                     verifierMessage.EndsWith(exceptionMessage, StringComparison.Ordinal),
-                    verifierMessage.Length);
+                    verifierMessage.Length,
+                    parseMessage.Length > 0 && parseMessage.Length < 450 && !HasLineBreak(parseMessage),
+                    directMessage.Length < 450 && !HasLineBreak(directMessage) && directMessage.EndsWith("...(+4617 more)", StringComparison.Ordinal));
             }
             finally
             {
@@ -187,9 +211,36 @@ public class PasskeyTextShould : UnitTestMenuContainer
             because.ItsTrue("the JSON exception's message is cut once, on one line, note " + outcome.ExceptionNote, outcome.ExceptionMessageCutOnce);
             because.ItsTrue("the challenge verifier returns that message uncut, with the same note", outcome.VerifierKeepsTheNote);
             because.ItsTrue("the challenge verifier's message is bounded, length " + outcome.VerifierMessageLength, outcome.VerifierMessageLength < 520);
+            because.ItsTrue("ClientData.Parse throws a bounded one-line message", outcome.ParseMessageBounded);
+            because.ItsTrue("any PasskeyFormatException message is one bounded line with the real dropped count", outcome.DirectMessageBounded);
         })
         .SoBeHappy()
         .UnlessItFailed();
+    }
+
+    private static string NotIdempotent()
+    {
+        // Every length around the caps in use, with a control character mixed in, at three caps.
+        List<string> different = new List<string>();
+        foreach (int cap in new int[] { 1, 40, 120, 400 })
+        {
+            foreach (int length in new int[] { 0, 1, cap - 1, cap, cap + 1, cap + 20, cap + 21, cap + 22, cap + 1000, 70000 })
+            {
+                if (length < 0)
+                {
+                    continue;
+                }
+                string text = length == 0 ? string.Empty : "\n" + new string('y', length - 1);
+                string once = PasskeyText.Printable(text, cap);
+                string twice = PasskeyText.Printable(once, cap);
+                string thrice = PasskeyText.Printable("prefix: " + once, cap + 8);
+                if (once != twice || thrice != "prefix: " + once)
+                {
+                    different.Add(cap + "/" + length);
+                }
+            }
+        }
+        return string.Join(" ", different);
     }
 
     private static string U(int codePoint)
@@ -234,9 +285,9 @@ public class PasskeyTextShould : UnitTestMenuContainer
         }
     }
 
-    private sealed record PrintableOutcome(string Null, string Empty, string BrowserOrigin, string AppOrigin, string Controls, string Separators, string Formats, string LoneSurrogates, string International, string PrivateUse, string Long, string Short, string ZeroCap, string SplitPair, string ExactlyAtCap);
+    private sealed record PrintableOutcome(string Null, string Empty, string BrowserOrigin, string AppOrigin, string Controls, string Separators, string Formats, string LoneSurrogates, string International, string PrivateUse, string Long, string Short, string ZeroCap, string SplitPair, string ExactlyAtCap, string NotIdempotent, string AlreadyCut, string NoteInMiddle, string NoteWithoutDigits, string NoteTooFar);
 
     private sealed record DetailOutcome(PasskeyVerificationFailure OriginFailure, bool OriginHasLineBreak, int OriginDetailLength, bool OriginStillNamed, PasskeyVerificationFailure TypeFailure, bool TypeHasLineBreak, bool TypeStillNamed, bool DirectHasLineBreak, int DirectLength);
 
-    private sealed record LogOutcome(bool Registered, bool SignedIn, string? RegistrationMessage, int Events, bool AnyLineBreak, int LongestValue, bool HandleLogged, bool OriginLogged, bool CredentialLogged, bool LongDetailWasCut, string LongDetailNote, bool LongDetailLoggedUnchanged, bool ExceptionMessageCutOnce, string ExceptionNote, bool VerifierKeepsTheNote, int VerifierMessageLength);
+    private sealed record LogOutcome(bool Registered, bool SignedIn, string? RegistrationMessage, int Events, bool AnyLineBreak, int LongestValue, bool HandleLogged, bool OriginLogged, bool CredentialLogged, bool LongDetailWasCut, string LongDetailNote, bool LongDetailLoggedUnchanged, bool ExceptionMessageCutOnce, string ExceptionNote, bool VerifierKeepsTheNote, int VerifierMessageLength, bool ParseMessageBounded, bool DirectMessageBounded);
 }

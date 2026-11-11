@@ -49,13 +49,6 @@ public sealed record PasskeyVerification
     public const int MaxDetailLength = 400;
 
     /// <summary>
-    /// The cap to use when a detail is made printable again on its way to a log: a detail that
-    /// <see cref="Fail"/> already cut carries a truncation note after its <see cref="MaxDetailLength"/>
-    /// characters, and a second cut at the same length would replace that note with a wrong count.
-    /// </summary>
-    public const int MaxLoggedDetailLength = MaxDetailLength + 32;
-
-    /// <summary>
     /// A failed verification.  The detail may quote what the client sent (an origin, a type, a
     /// parser's complaint about its bytes), so it is passed through <see cref="PasskeyText.Printable"/>:
     /// one line, no control characters, at most <see cref="MaxDetailLength"/> characters.

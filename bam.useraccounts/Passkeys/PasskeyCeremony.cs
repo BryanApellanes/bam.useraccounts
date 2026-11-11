@@ -565,16 +565,16 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
     private static PasskeyRegistrationResult RegistrationFailed(string personHandle, PasskeyVerificationFailure failure, string? detail)
     {
         // The handle and, through the detail, the client's own bytes are caller-chosen: one bounded line each.
-        // A detail from PasskeyVerification.Fail is already printable and may end in a truncation note, so the
-        // cap here leaves room for it; a raw detail (a registrar exception message) is cut here for the first time.
-        Log.Warn("Passkey registration for {0} failed: {1} ({2})", PasskeyText.Printable(personHandle), failure, PasskeyText.Printable(detail ?? string.Empty, PasskeyVerification.MaxLoggedDetailLength));
+        // A detail from PasskeyVerification.Fail is already printable; Printable leaves its truncation note alone.
+        // A raw detail (a registrar exception message) is cut here for the first time.
+        Log.Warn("Passkey registration for {0} failed: {1} ({2})", PasskeyText.Printable(personHandle), failure, PasskeyText.Printable(detail ?? string.Empty, PasskeyVerification.MaxDetailLength));
         return new PasskeyRegistrationResult { Success = false, Failure = failure, Message = VerificationFailedMessage };
     }
 
     private static PasskeySignInResult SignInFailed(string? credentialId, PasskeyVerificationFailure failure, string? detail)
     {
         // The credential id comes straight from the response when no stored credential matched it.
-        Log.Warn("Passkey assertion for credential {0} failed: {1} ({2})", PasskeyText.Printable(credentialId), failure, PasskeyText.Printable(detail ?? string.Empty, PasskeyVerification.MaxLoggedDetailLength));
+        Log.Warn("Passkey assertion for credential {0} failed: {1} ({2})", PasskeyText.Printable(credentialId), failure, PasskeyText.Printable(detail ?? string.Empty, PasskeyVerification.MaxDetailLength));
         return new PasskeySignInResult { Success = false, Failure = failure, Message = VerificationFailedMessage };
     }
 }

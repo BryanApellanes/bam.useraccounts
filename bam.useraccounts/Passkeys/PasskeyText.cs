@@ -16,6 +16,11 @@ public static class PasskeyText
     /// <summary>What stands in for a character that is not shown.</summary>
     public const char Replacement = '?';
 
+    // "...(+" then up to ten digits then " more)": the longest note Printable can append.
+    private const int MaxNoteLength = 21;
+    private const string NoteStart = "...(+";
+    private const string NoteEnd = " more)";
+
     /// <summary>
     /// Returns the text as one printable line of bounded length: control characters, line and
     /// paragraph separators, format characters (bidirectional overrides, zero-width marks),
@@ -28,6 +33,15 @@ public static class PasskeyText
     /// output may be either), and zero-width joiners are format characters, so an emoji sequence
     /// or a word that uses one shows a <c>?</c> in the middle.  The result is for reading, never
     /// for comparing or parsing.
+    /// <para>
+    /// Applying it twice with the same cap gives the same result as applying it once: text that
+    /// already ends in a truncation note and is no longer than the cap plus that note is kept
+    /// whole.  Printable text is routinely wrapped and passed on (a parser message inside an
+    /// exception inside a failure detail inside a log entry), and a second cut would replace the
+    /// note with a wrong count.  The price is that a caller can end their own text with a
+    /// note-shaped suffix and gain up to 21 characters past the cap; the result is still one
+    /// bounded line.
+    /// </para>
     /// </summary>
     /// <param name="text">The caller-chosen text; null reads as <c>(none)</c>.</param>
     /// <param name="maxLength">The most characters of the text to keep; values below one keep one.</param>
@@ -40,6 +54,11 @@ public static class PasskeyText
         }
         int limit = Math.Max(1, maxLength);
         int kept = Math.Min(text.Length, limit);
+        if (text.Length > limit && text.Length <= limit + MaxNoteLength && EndsWithNote(text))
+        {
+            // Already cut by an earlier pass: keep its note rather than cutting through it.
+            kept = text.Length;
+        }
         StringBuilder printable = new StringBuilder(kept + 24);
         for (int index = 0; index < kept; index++)
         {
@@ -62,9 +81,26 @@ public static class PasskeyText
         }
         if (text.Length > kept)
         {
-            printable.Append("...(+").Append((text.Length - kept).ToString(CultureInfo.InvariantCulture)).Append(" more)");
+            printable.Append(NoteStart).Append((text.Length - kept).ToString(CultureInfo.InvariantCulture)).Append(NoteEnd);
         }
         return printable.ToString();
+    }
+
+    private static bool EndsWithNote(string text)
+    {
+        if (!text.EndsWith(NoteEnd, StringComparison.Ordinal))
+        {
+            return false;
+        }
+        int digitsEnd = text.Length - NoteEnd.Length;
+        int digitsStart = digitsEnd;
+        while (digitsStart > 0 && digitsEnd - digitsStart < 10 && char.IsAsciiDigit(text[digitsStart - 1]))
+        {
+            digitsStart--;
+        }
+        return digitsStart < digitsEnd
+            && digitsStart >= NoteStart.Length
+            && string.CompareOrdinal(text, digitsStart - NoteStart.Length, NoteStart, 0, NoteStart.Length) == 0;
     }
 
     private static bool IsShown(UnicodeCategory category)
