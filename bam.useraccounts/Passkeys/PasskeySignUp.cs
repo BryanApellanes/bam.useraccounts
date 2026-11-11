@@ -18,6 +18,9 @@ public sealed class PasskeySignUp : IPasskeySignUp
     /// <summary>The message for refusals whose reason must not reach an anonymous caller.</summary>
     public const string SignUpFailedMessage = "Sign-up could not be completed";
 
+    // A handle is at most 64 characters once accepted; a refused one is logged cut to this length.
+    private const int PrintableHandleLength = 40;
+
     private readonly IPasskeyCeremony _ceremony;
     private readonly IUserAccountService _accounts;
     private readonly IPasskeyCredentialRepository _credentials;
@@ -53,7 +56,7 @@ public sealed class PasskeySignUp : IPasskeySignUp
         }
         if (refusal != SignUpRefusal.None)
         {
-            Log.Warn("Passkey sign-up for {0} refused at begin: {1}", Printable(handle), refusal);
+            Log.Warn("Passkey sign-up for {0} refused at begin: {1}", PasskeyText.Printable(handle, PrintableHandleLength), refusal);
             return new PasskeySignUpBeginResult { Success = false, Refusal = refusal, Message = MessageFor(refusal) };
         }
 
@@ -74,7 +77,7 @@ public sealed class PasskeySignUp : IPasskeySignUp
         }
         if (refusal != SignUpRefusal.None)
         {
-            Log.Warn("Passkey sign-up for {0} refused at completion: {1}", Printable(handle), refusal);
+            Log.Warn("Passkey sign-up for {0} refused at completion: {1}", PasskeyText.Printable(handle, PrintableHandleLength), refusal);
             return new PasskeySignUpResult { Success = false, Refusal = refusal, Message = MessageFor(refusal) };
         }
 
@@ -134,7 +137,7 @@ public sealed class PasskeySignUp : IPasskeySignUp
         string handle = SignUpPolicy.NormalizeHandle(personHandle);
         if (handle.Length == 0 || !_credentials.FindByHandle(handle).Any(credential => !credential.Pending))
         {
-            Log.Warn("Profile completion for {0} refused: the handle has no passkey", Printable(handle));
+            Log.Warn("Profile completion for {0} refused: the handle has no passkey", PasskeyText.Printable(handle, PrintableHandleLength));
             return false;
         }
         if (PersonExists(handle))
@@ -269,12 +272,5 @@ public sealed class PasskeySignUp : IPasskeySignUp
             default:
                 return SignUpFailedMessage;
         }
-    }
-
-    /// <summary>Keeps caller-chosen text in the log to a short, single-line sample.</summary>
-    private static string Printable(string handle)
-    {
-        string sample = handle.Length <= 40 ? handle : handle.Substring(0, 40) + "...";
-        return new string(sample.Select(character => char.IsControl(character) ? '?' : character).ToArray());
     }
 }
