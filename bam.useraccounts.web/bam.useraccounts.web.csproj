@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Bam.UserAccounts.Web</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- White-label passkey account template (design: bam.useraccounts#7). The ASP.NET Core
+         framework reference is contained to this Razor class library, as bam.protocol.aspnetcore
+         contains it for the actor-auth adapter; bam.useraccounts itself stays web-free. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\bam.useraccounts\bam.useraccounts.csproj" />
+  </ItemGroup>
+
+</Project>

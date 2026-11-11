@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Bam.UserAccounts.Web.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <!-- Microsoft.NET.Sdk.Web (not the plain SDK the other test projects use): only a web-SDK host
+       gets a <host>.staticwebassets.runtime.json manifest, which is what serves a Razor class
+       library's wwwroot under _content/ from a build output directory. Real Blazor hosts are
+       web-SDK projects, so the test host is one too. -->
+
+  <ItemGroup>
+    <ProjectReference Include="$(BamFrameworkRoot)bam.base\bam.base\bam.base.csproj" />
+    <ProjectReference Include="$(BamFrameworkRoot)bam.console\bam.console\bam.console.csproj" />
+    <ProjectReference Include="$(BamFrameworkRoot)bam.test\bam.test\bam.test.csproj" />
+    <ProjectReference Include="$(BamFrameworkRoot)bam.encryption\bam.encryption\bam.encryption.csproj" />
+    <ProjectReference Include="$(BamFrameworkRoot)bam.protocol\bam.protocol.data\bam.protocol.data.csproj" />
+    <ProjectReference Include="$(BamFrameworkRoot)bam.protocol\bam.protocol.profile\bam.protocol.profile.csproj" />
+    <ProjectReference Include="..\bam.useraccounts\bam.useraccounts.csproj" />
+    <ProjectReference Include="..\bam.useraccounts.web\bam.useraccounts.web.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NSubstitute" Version="5.3.0" />
+  </ItemGroup>
+
+</Project>
