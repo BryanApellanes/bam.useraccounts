@@ -16,6 +16,10 @@ public class PasskeyInventoryShould : UnitTestMenuContainer
         custody.Save(Credential("alice", "cred-a1", start, isKeySet: true));
         custody.Save(Credential("alice", "cred-a2", start.AddMinutes(1), isKeySet: false));
         custody.Save(Credential("bob", "cred-b1", start.AddMinutes(2), isKeySet: true));
+        // A registration the registrar has not accepted: never one of bob's passkeys.
+        PasskeyCredentialData pending = Credential("bob", "cred-b-pending", start.AddMinutes(3), isKeySet: true);
+        pending.Pending = true;
+        custody.Save(pending);
         return custody;
     }
 
@@ -64,7 +68,7 @@ public class PasskeyInventoryShould : UnitTestMenuContainer
             string? ownName = custody.FindByCredentialId("cred-a2")?.Name;
             bool others = inventory.Rename("alice", "cred-b1", "mine now");
             bool unknown = inventory.Rename("alice", "cred-zz", "ghost");
-            bool blankHandle = inventory.Rename("", "cred-a1", "anonymous");
+            bool blankHandle = inventory.Rename("", "cred-a1", "anonymous") || inventory.Rename("bob", "cred-b-pending", "not yet mine");
             bool longName = inventory.Rename("alice", "cred-a1", new string('n', 200));
             int longLength = custody.FindByCredentialId("cred-a1")?.Name?.Length ?? 0;
             bool cleared = inventory.Rename("alice", "cred-a2", " ");
@@ -75,7 +79,7 @@ public class PasskeyInventoryShould : UnitTestMenuContainer
         {
             because.ItsTrue("a person renames their own passkey, trimmed", outcome.Own && outcome.OwnName == "phone");
             because.ItsTrue("but not another person's", !outcome.Others && outcome.OthersName is null);
-            because.ItsTrue("nor an unknown credential, nor without a handle", !outcome.Unknown && !outcome.BlankHandle);
+            because.ItsTrue("nor an unknown credential, nor without a handle, nor a pending one", !outcome.Unknown && !outcome.BlankHandle);
             because.ItsTrue("a long name is cut to the limit", outcome.LongName && outcome.LongLength == PasskeyInventory.MaxNameLength);
             because.ItsTrue("a blank name clears it", outcome.Cleared && outcome.ClearedName is null);
         })
@@ -104,7 +108,7 @@ public class PasskeyInventoryShould : UnitTestMenuContainer
         {
             because.ItsTrue("another person's passkey is not found", outcome.Others == PasskeyRemoval.NotFound);
             because.ItsTrue("an unknown credential is not found", outcome.Unknown == PasskeyRemoval.NotFound);
-            because.ItsTrue("a person's only passkey is refused", outcome.BobsLast == PasskeyRemoval.LastCredential && outcome.BobsRemaining == 1);
+            because.ItsTrue("a person's only passkey is refused, a pending row beside it notwithstanding", outcome.BobsLast == PasskeyRemoval.LastCredential && outcome.BobsRemaining == 2);
             because.ItsTrue("the key-set passkey can be removed while another remains", outcome.KeySet == PasskeyRemoval.Removed);
             because.ItsTrue("removing it twice is not found", outcome.Again == PasskeyRemoval.NotFound);
             because.ItsTrue("the remaining passkey is then the last and stays", outcome.AlicesLast == PasskeyRemoval.LastCredential && outcome.AlicesRemaining.SequenceEqual(new string[] { "cred-a2" }));

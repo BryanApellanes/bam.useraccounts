@@ -33,7 +33,8 @@ public sealed class PasskeyInventory : IPasskeyInventory
         {
             return new List<PasskeyCredentialData>();
         }
-        return _credentials.FindByHandle(personHandle);
+        // A pending row is a registration the registrar has not accepted: not one of the person's passkeys.
+        return _credentials.FindByHandle(personHandle).Where(credential => !credential.Pending).ToList();
     }
 
     /// <inheritdoc />
@@ -65,7 +66,7 @@ public sealed class PasskeyInventory : IPasskeyInventory
         {
             return PasskeyRemoval.NotFound;
         }
-        if (_credentials.FindByHandle(personHandle).Count <= 1)
+        if (List(personHandle).Count <= 1)
         {
             return PasskeyRemoval.LastCredential;
         }
@@ -91,6 +92,6 @@ public sealed class PasskeyInventory : IPasskeyInventory
             return null;
         }
         PasskeyCredentialData? credential = _credentials.FindByCredentialId(credentialId);
-        return credential is not null && string.Equals(credential.PersonHandle, personHandle, StringComparison.Ordinal) ? credential : null;
+        return credential is not null && !credential.Pending && string.Equals(credential.PersonHandle, personHandle, StringComparison.Ordinal) ? credential : null;
     }
 }

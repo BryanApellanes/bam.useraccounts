@@ -132,7 +132,7 @@ public sealed class PasskeySignUp : IPasskeySignUp
     public bool EnsureProfile(string personHandle, string? displayName, string? email)
     {
         string handle = SignUpPolicy.NormalizeHandle(personHandle);
-        if (handle.Length == 0 || _credentials.FindByHandle(handle).Count == 0)
+        if (handle.Length == 0 || !_credentials.FindByHandle(handle).Any(credential => !credential.Pending))
         {
             Log.Warn("Profile completion for {0} refused: the handle has no passkey", Printable(handle));
             return false;
