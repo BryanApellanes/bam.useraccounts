@@ -39,7 +39,7 @@ Authentication is handled through the `IAuthenticator` interface and its impleme
 | `SignUpResponse` | Response for sign-up operations. |
 | `SignUpOptions` | Input data: `EmailAddress`, `UserName`, `PasswordHash`, `SendConfirmation`. |
 | **Passkeys (`Bam.UserAccounts.Passkeys`)** | |
-| `PasskeyOptions` | Relying-party policy: `RpId`, `RpName`, `AllowedOrigins`, `RequireUserVerification`, `ChallengeLifetime`, `Algorithms` (ES256, RS256 by default). `Validate()` runs at registration. |
+| `PasskeyOptions` | Relying-party policy: `RpId`, `RpName`, `AllowedOrigins`, `AllowedAppOrigins`, `RequireUserVerification`, `ChallengeLifetime`, `Algorithms` (ES256, RS256 by default). `Validate()` runs at registration. |
 | `IPasskeyCeremony` / `PasskeyCeremony` | The WebAuthn ceremonies: sign-up `BeginRegistration` / `CompleteRegistration`, authenticated-only `BeginAdditionalRegistration` / `CompleteAdditionalRegistration`, `BeginAssertion` / `CompleteAssertion`, plus `ToRequestOptions` for a confirmation challenge. Challenges live in `IConfirmationChallengeRepository` under `passkey-*:` prefixed handles. |
 | `PasskeyRegistrationVerifier`, `PasskeyAssertionVerifier` | Pure verifiers for a registration response (WebAuthn section 7.1) and an assertion (section 7.2). Never throw on client input; return a `PasskeyVerification` with a `PasskeyVerificationFailure`. |
 | `IPasskeyCredentialRepository` | Credential custody: `Save`, `FindByCredentialId`, `FindByHandle`, `FindByUserHandle`, `RecordUse`, `FlagSignCountRegression`, `Activate`, `Remove`. `InMemoryPasskeyCredentialRepository` and `PersistedPasskeyCredentialRepository` (over `IRepository`). |
@@ -179,6 +179,34 @@ Behaviour worth knowing:
 - Base64url fields over 64 KiB are refused before decoding. Hosts should still bound the request body.
 - `AddPasskeys` binds the two adapters under their concrete types and, when the host has not bound them, under `IAccountConfirmation` / `IChallengeSignatureVerifier`, so a passkey-only host gets `UserAccountService.ConfirmAccount` on passkeys purely by registration. A host that calls `AddDeviceKeyAccountConfirmation` first keeps the device-key bindings and reaches the passkey path by resolving `PasskeyAccountConfirmation`. Existing `IConfirmationChallengeRepository`, `IPasskeyCredentialRepository` and `IDetachedSignatureVerifier` bindings are respected; note that `AddDeviceKeyAccountConfirmation` itself rebinds challenge custody, so bind custom custody after it.
 - Attestation statements are not verified; registration asks for `attestation: "none"`.
+
+### Passkeys from native apps
+
+A browser presents an https origin. A native Android app that uses Credential Manager presents `android:apk-key-hash:<hash>` instead, where the hash identifies the certificate the app was signed with. List each one in `AllowedAppOrigins`:
+
+```csharp
+registry.AddPasskeys(new PasskeyOptions
+{
+    RpId = "example.com",
+    RpName = "Example",
+    AllowedOrigins = new List<string> { "https://example.com" },
+    AllowedAppOrigins = new List<string>
+    {
+        "android:apk-key-hash:<release key hash>",
+        "android:apk-key-hash:<debug key hash>"
+    }
+});
+```
+
+App origins are matched as exact, case-sensitive strings and only against this list. The browser list keeps its own rule (scheme, host and port), and the two never cross. The list is empty by default, so no Android app is accepted until one is listed. A browser origin is still required: the relying-party domain has to exist to serve the association files.
+
+Every key that signs the app needs its own entry: the debug key on each developer machine, the upload key, and the Play app signing key if Google re-signs the release. Leave debug hashes out of production configuration.
+
+To get the value, take the SHA-256 fingerprint of the signing certificate (`keytool -list -v -keystore <keystore> -alias <alias>`, or the Play Console's app signing page), convert the 32 bytes from hex to base64url, and drop the `=` padding. The surest check is to run one ceremony from the app and read the origin the server refused: with the list empty the failure detail names it. Sources disagree on whether some Android versions send a SHA-1 hash here; the server compares the whole string, so whatever the device sends is what goes in the list.
+
+iOS and Mac Catalyst apps present `https://<rp id>`, so `AllowedOrigins` already covers them.
+
+The app's domain also has to vouch for the app (`/.well-known/assetlinks.json` for Android, `/.well-known/apple-app-site-association` for Apple) or the operating system refuses the ceremony before the server sees it. Serving those from options is tracked in #13.
 
 ## Known Gaps / Not Yet Implemented
 
