@@ -1,0 +1,31 @@
+@* A button the browser module binds to.  Mode is one of register, signin, add, rename, remove,
+   signout; the module reads the named form's fields and runs that action. *@
+
+<button type="button" class="btn @CssClass account-button" data-account-action="@Mode" data-account-form="@FormId"
+        data-account-return="@ReturnUrl" data-account-credential="@CredentialId">@Label</button>
+
+@code {
+    /// <summary>The action: <c>register</c>, <c>signin</c>, <c>add</c>, <c>rename</c>, <c>remove</c> or <c>signout</c>.</summary>
+    [Parameter, EditorRequired]
+    public string Mode { get; set; } = string.Empty;
+
+    /// <summary>The button text.</summary>
+    [Parameter, EditorRequired]
+    public string Label { get; set; } = string.Empty;
+
+    /// <summary>The id of the form whose fields the action reads, if any.</summary>
+    [Parameter]
+    public string? FormId { get; set; }
+
+    /// <summary>Where to go after sign-in; the server uses it only when it is a path on this site.</summary>
+    [Parameter]
+    public string? ReturnUrl { get; set; }
+
+    /// <summary>The passkey a rename or remove acts on.</summary>
+    [Parameter]
+    public string? CredentialId { get; set; }
+
+    /// <summary>Bootstrap button classes.  Defaults to <c>btn-primary</c>.</summary>
+    [Parameter]
+    public string CssClass { get; set; } = "btn-primary";
+}

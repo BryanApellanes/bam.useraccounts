@@ -1,0 +1,88 @@
+@page "/account"
+@* Manage passkeys: list, add, rename, remove, sign out.  The list is rendered on the server
+   from the session's handle; the buttons act through the account endpoints. *@
+@using System.Globalization
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Http
+@attribute [Authorize(Policy = AccountWebRegistration.Policy)]
+@inject AccountSiteOptions Site
+@inject IPasskeyInventory Inventory
+@inject IPasskeySignUp SignUp
+
+<AccountLayout Title="@Site.Strings.ManageTitle">
+    <p class="account-who">@_displayName <span class="text-muted">@_handle</span></p>
+    @if (!_profileComplete)
+    {
+        <p class="account-warning alert alert-warning">@Site.Strings.ProfileIncompleteMessage</p>
+    }
+    @if (Site.Slots.PostSignUp is not null)
+    {
+        <DynamicComponent Type="Site.Slots.PostSignUp" />
+    }
+    <ul class="account-passkeys list-group">
+        @foreach (PasskeyCredentialData passkey in _passkeys)
+        {
+            string formId = "account-passkey-" + passkey.CredentialId;
+            <li class="account-passkey list-group-item">
+                <form id="@formId" class="account-passkey-form" action="@AccountRoutes.Manage" novalidate>
+                    <input class="form-control" name="name" type="text" maxlength="@PasskeyInventory.MaxNameLength" value="@passkey.Name"
+                           placeholder="@Site.Strings.UnnamedPasskey" aria-label="@Site.Strings.PasskeyNameLabel" />
+                    <PasskeyButton Mode="rename" FormId="@formId" CredentialId="@passkey.CredentialId" Label="@Site.Strings.Rename" CssClass="btn-outline-secondary" />
+                    <PasskeyButton Mode="remove" CredentialId="@passkey.CredentialId" Label="@Site.Strings.Remove" CssClass="btn-outline-danger" />
+                </form>
+                <span class="account-passkey-facts text-muted small">
+                    @if (string.Equals(passkey.CredentialId, _currentCredentialId, StringComparison.Ordinal))
+                    {
+                        <span class="account-current badge text-bg-secondary">@Site.Strings.CurrentPasskeyBadge</span>
+                    }
+                    @Site.Strings.AddedPrefix @Day(passkey.CreatedUtc)
+                    @if (passkey.LastUsedUtc is DateTime lastUsed)
+                    {
+                        <span>· @Site.Strings.LastUsedPrefix @Day(lastUsed)</span>
+                    }
+                </span>
+            </li>
+        }
+    </ul>
+    <form id="account-add" class="account-form account-add" action="@AccountRoutes.Manage" novalidate>
+        <label class="form-label" for="account-add-name">@Site.Strings.PasskeyNameLabel</label>
+        <input class="form-control" id="account-add-name" name="name" type="text" maxlength="@PasskeyInventory.MaxNameLength" />
+        <PasskeyButton Mode="add" FormId="account-add" Label="@Site.Strings.AddPasskey" />
+    </form>
+    <PasskeyButton Mode="signout" Label="@Site.Strings.SignOut" CssClass="btn-link" />
+</AccountLayout>
+
+@code {
+    private IReadOnlyList<PasskeyCredentialData> _passkeys = new List<PasskeyCredentialData>();
+    private string _handle = string.Empty;
+    private string _displayName = string.Empty;
+    private string? _currentCredentialId;
+    private bool _profileComplete = true;
+
+    /// <summary>The current request, supplied by static server rendering.</summary>
+    [CascadingParameter]
+    public HttpContext? HttpContext { get; set; }
+
+    /// <inheritdoc />
+    protected override void OnInitialized()
+    {
+        string? handle = AccountPrincipal.Handle(HttpContext?.User);
+        if (handle is null)
+        {
+            // The route requires the account policy, so this is unreachable through the host's
+            // router; render nothing rather than someone else's list if it is ever reached.
+            return;
+        }
+        _handle = handle;
+        _displayName = AccountPrincipal.DisplayName(HttpContext?.User) ?? handle;
+        _currentCredentialId = AccountPrincipal.CredentialId(HttpContext?.User);
+        _passkeys = Inventory.List(handle).OrderBy(passkey => passkey.CreatedUtc).ToList();
+        // Sign-up writes the profile after the passkey claims the handle; if that write failed, finish it here.
+        _profileComplete = SignUp.EnsureProfile(handle, _displayName, null);
+    }
+
+    private static string Day(DateTime moment)
+    {
+        return moment.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    }
+}

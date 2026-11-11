@@ -1,0 +1,8 @@
+@page "/account/signedout"
+@* Shown after signing out, or after removing the passkey the session was opened with. *@
+@inject AccountSiteOptions Site
+
+<AccountLayout Title="@Site.Strings.SignedOutTitle">
+    <p>@Site.Strings.SignedOutMessage</p>
+    <p class="account-alternate"><a href="@AccountRoutes.SignIn" data-enhance-nav="false">@Site.Strings.SignInTitle</a></p>
+</AccountLayout>

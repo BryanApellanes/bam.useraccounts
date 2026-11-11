@@ -25,6 +25,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The synthetic authenticator and the ceremony fixtures, shared with bam.useraccounts.tests as source. -->
+    <Compile Include="..\bam.useraccounts.tests\TestClasses\SyntheticAuthenticator.cs" Link="TestClasses\Shared\SyntheticAuthenticator.cs" />
+    <Compile Include="..\bam.useraccounts.tests\TestClasses\PasskeyFixture.cs" Link="TestClasses\Shared\PasskeyFixture.cs" />
+    <Compile Include="..\bam.useraccounts.tests\TestClasses\SignUpFixture.cs" Link="TestClasses\Shared\SignUpFixture.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="NSubstitute" Version="5.3.0" />
   </ItemGroup>
 

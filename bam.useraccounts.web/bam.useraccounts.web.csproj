@@ -17,6 +17,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\bam.useraccounts\bam.useraccounts.csproj" />
+    <!-- AnonymousAccessAttribute: marks the account routes for hosts that also run the actor middleware. -->
+    <ProjectReference Include="$(BamFrameworkRoot)bam.protocol\bam.protocol\bam.protocol.csproj" />
   </ItemGroup>
 
 </Project>
