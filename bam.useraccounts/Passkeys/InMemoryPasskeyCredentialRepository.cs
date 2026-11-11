@@ -97,6 +97,21 @@ public sealed class InMemoryPasskeyCredentialRepository : IPasskeyCredentialRepo
     }
 
     /// <inheritdoc />
+    public bool SetName(string personHandle, string credentialId, string? name)
+    {
+        lock (_lock)
+        {
+            if (!_byCredentialId.TryGetValue(credentialId, out PasskeyCredentialData? credential)
+                || !string.Equals(credential.PersonHandle, personHandle, StringComparison.Ordinal))
+            {
+                return false;
+            }
+            credential.Name = string.IsNullOrWhiteSpace(name) ? null : name.Trim();
+            return true;
+        }
+    }
+
+    /// <inheritdoc />
     public bool Remove(string personHandle, string credentialId)
     {
         lock (_lock)

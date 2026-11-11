@@ -41,6 +41,18 @@ public interface IPasskeyCredentialRepository
     bool Activate(string personHandle, string credentialId);
 
     /// <summary>
+    /// Sets the display name a person gave one of their credentials (for example "work laptop"),
+    /// so they can tell their passkeys apart.  The name is trimmed; a blank name clears it.  The
+    /// row is addressed by person and credential id together; a credential with that id
+    /// belonging to someone else is left alone.
+    /// </summary>
+    /// <param name="personHandle">The person the credential belongs to.</param>
+    /// <param name="credentialId">The credential id, base64url.</param>
+    /// <param name="name">The new display name, or null/blank to clear it.</param>
+    /// <returns>Whether that person has a credential with that id and it was updated.</returns>
+    bool SetName(string personHandle, string credentialId, string? name);
+
+    /// <summary>
     /// Removes one person's credential.  The row is addressed by person and credential id
     /// together; a credential with that id belonging to someone else is left alone.
     /// </summary>

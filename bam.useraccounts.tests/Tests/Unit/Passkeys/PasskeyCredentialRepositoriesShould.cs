@@ -42,7 +42,7 @@ public class PasskeyCredentialRepositoriesShould : UnitTestMenuContainer
             CustodyOutcome outcome = Exercise(repository);
             IRepository backing = reg.Get<IRepository>();
             backing.Received().AddType<PasskeyCredentialData>();
-            backing.Received(3).Update(Arg.Any<PasskeyCredentialData>());
+            backing.Received(5).Update(Arg.Any<PasskeyCredentialData>());
             return outcome;
         })
         .TheTest
@@ -83,6 +83,14 @@ public class PasskeyCredentialRepositoriesShould : UnitTestMenuContainer
         bool pendingAfterActivation = repository.FindByCredentialId("cred-c1")?.Pending ?? true;
         bool activatedUnknown = repository.Activate("carol", "cred-zz");
 
+        bool named = repository.SetName("alice", "cred-a1", "  work laptop  ");
+        string? nameAfterSet = repository.FindByCredentialId("cred-a1")?.Name;
+        bool namedForAnother = repository.SetName("bob", "cred-a1", "bob's now");
+        string? nameAfterForeignSet = repository.FindByCredentialId("cred-a1")?.Name;
+        bool cleared = repository.SetName("alice", "cred-a1", "   ");
+        string? nameAfterClear = repository.FindByCredentialId("cred-a1")?.Name;
+        bool namedUnknown = repository.SetName("alice", "cred-zz", "nobody's");
+
         bool duplicateRefused = false;
         try
         {
@@ -101,7 +109,8 @@ public class PasskeyCredentialRepositoriesShould : UnitTestMenuContainer
         int remaining = repository.FindByHandle("alice").Count;
         return new CustodyOutcome(found, missing, alices, byUserHandle, used, flagged, removed, removedAgain, remaining,
             new ActivationOutcome(savedPending, activated, pendingAfterActivation, activatedUnknown),
-            new OwnershipOutcome(activatedForAnother, pendingAfterForeignActivation, duplicateRefused, ownerAfterDuplicate, removedForAnother, stillThereAfterForeignRemove));
+            new OwnershipOutcome(activatedForAnother, pendingAfterForeignActivation, duplicateRefused, ownerAfterDuplicate, removedForAnother, stillThereAfterForeignRemove),
+            new NamingOutcome(named, nameAfterSet, namedForAnother, nameAfterForeignSet, cleared, nameAfterClear, namedUnknown));
     }
 
     private static void AssertCustody(Because because, CustodyOutcome outcome)
@@ -119,6 +128,10 @@ public class PasskeyCredentialRepositoriesShould : UnitTestMenuContainer
         because.ItsTrue("a credential id that is already stored is refused", outcome.Ownership.DuplicateRefused);
         because.ItsTrue("and the stored row keeps its owner", outcome.Ownership.OwnerAfterDuplicate == "bob");
         because.ItsTrue("removal under another person's handle does nothing", !outcome.Ownership.RemovedForAnother && outcome.Ownership.StillThereAfterForeignRemove);
+        because.ItsTrue("names a credential, trimmed", outcome.Naming.Named && outcome.Naming.NameAfterSet == "work laptop");
+        because.ItsTrue("naming under another person's handle does nothing", !outcome.Naming.NamedForAnother && outcome.Naming.NameAfterForeignSet == "work laptop");
+        because.ItsTrue("a blank name clears it", outcome.Naming.Cleared && outcome.Naming.NameAfterClear is null);
+        because.ItsTrue("naming an unknown credential reports false", !outcome.Naming.NamedUnknown);
         because.ItsTrue("removes a credential once", outcome.Removed && !outcome.RemovedAgain);
         because.ItsTrue("removal leaves the person's other credential", outcome.Remaining == 1);
     }
@@ -176,9 +189,11 @@ public class PasskeyCredentialRepositoriesShould : UnitTestMenuContainer
 
     private sealed record CustodyOutcome(PasskeyCredentialData? Found, PasskeyCredentialData? Missing, IReadOnlyList<PasskeyCredentialData> Alices,
         IReadOnlyList<PasskeyCredentialData> ByUserHandle, PasskeyCredentialData? Used, PasskeyCredentialData? Flagged, bool Removed, bool RemovedAgain, int Remaining,
-        ActivationOutcome Activation, OwnershipOutcome Ownership);
+        ActivationOutcome Activation, OwnershipOutcome Ownership, NamingOutcome Naming);
 
     private sealed record OwnershipOutcome(bool ActivatedForAnother, bool PendingAfterForeignActivation, bool DuplicateRefused, string? OwnerAfterDuplicate, bool RemovedForAnother, bool StillThereAfterForeignRemove);
+
+    private sealed record NamingOutcome(bool Named, string? NameAfterSet, bool NamedForAnother, string? NameAfterForeignSet, bool Cleared, string? NameAfterClear, bool NamedUnknown);
 
     private sealed record ActivationOutcome(bool SavedPending, bool Activated, bool PendingAfterActivation, bool ActivatedUnknown);
 }
