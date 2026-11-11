@@ -39,6 +39,7 @@ public sealed class PasskeyChallengeSignatureVerifier : IChallengeSignatureVerif
         }
         catch (PasskeyFormatException e)
         {
+            // A PasskeyFormatException's message is already one bounded line, whoever threw it.
             return Failed(signerPublicKey, "assertion is not valid JSON: " + e.Message);
         }
         if (response is null || string.IsNullOrEmpty(response.Id))

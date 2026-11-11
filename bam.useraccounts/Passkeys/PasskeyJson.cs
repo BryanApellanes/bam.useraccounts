@@ -40,6 +40,9 @@ public static class PasskeyJson
         }
         catch (JsonException e)
         {
+            // The parser's message quotes the caller's own property names and values.  PasskeyFormatException makes
+            // its Message one bounded line; the JsonException stays attached as InnerException with its full text, so
+            // a host that logs ToString() still gets all of it.
             throw new PasskeyFormatException($"JSON is not a valid {typeof(T).Name}: {e.Message}", e);
         }
     }

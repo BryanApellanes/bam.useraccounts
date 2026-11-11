@@ -45,10 +45,17 @@ public sealed record PasskeyVerification
         return new PasskeyVerification(true, PasskeyVerificationFailure.None, string.Empty, null, authenticatorData);
     }
 
-    /// <summary>A failed verification.</summary>
+    /// <summary>The most characters of a failure detail that are kept.</summary>
+    public const int MaxDetailLength = 400;
+
+    /// <summary>
+    /// A failed verification.  The detail may quote what the client sent (an origin, a type, a
+    /// parser's complaint about its bytes), so it is passed through <see cref="PasskeyText.Printable"/>:
+    /// one line, no control characters, at most <see cref="MaxDetailLength"/> characters.
+    /// </summary>
     public static PasskeyVerification Fail(PasskeyVerificationFailure failure, string detail)
     {
-        return new PasskeyVerification(false, failure, detail, null, null);
+        return new PasskeyVerification(false, failure, PasskeyText.Printable(detail, MaxDetailLength), null, null);
     }
 }
 
