@@ -24,6 +24,7 @@ public sealed class PasskeyFixture
         {
             PublicKeySetData keySet = callInfo.Arg<PublicKeySetData>();
             Registered.Add(keySet);
+            DuringRegister?.Invoke(keySet);
             if (RegistrarThrows is not null)
             {
                 throw RegistrarThrows;
@@ -46,6 +47,9 @@ public sealed class PasskeyFixture
     public IPublicKeySetRegistrar Registrar { get; }
     public List<PublicKeySetData> Registered { get; } = new List<PublicKeySetData>();
     public Exception? RegistrarThrows { get; set; }
+
+    /// <summary>Runs inside the registrar's <c>Register</c>, before it answers: the window in which a saved credential is still pending.</summary>
+    public Action<PublicKeySetData>? DuringRegister { get; set; }
     public DetachedSignatureVerifier SignatureVerifier { get; }
     public PasskeyCeremony Ceremony { get; }
 

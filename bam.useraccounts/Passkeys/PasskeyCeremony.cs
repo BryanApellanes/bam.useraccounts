@@ -41,6 +41,20 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
     private const string AssertionPrefix = "passkey-assertion:";
     private const string AssertionHandlePrefix = "passkey-assertion-handle:";
 
+    // The first byte of an assertion's handle binding row.  A marker byte instead of an empty
+    // row for the discoverable case, so no backend that stores an empty value as null can turn
+    // "discoverable" into "row lost".
+    private const byte DiscoverableBinding = 0x00;
+    private const byte HandleBinding = 0x01;
+
+    /// <summary>
+    /// How long a credential row may stay pending (saved, its key not yet accepted by the
+    /// registrar) before the next registration for its handle or credential id removes it.  A
+    /// pending row is never usable; one older than this was left by a process that stopped
+    /// between the save and the registrar's answer.
+    /// </summary>
+    public static readonly TimeSpan PendingCredentialGrace = TimeSpan.FromMinutes(5);
+
     private readonly PasskeyOptions _options;
     private readonly IConfirmationChallengeRepository _challenges;
     private readonly IPasskeyCredentialRepository _credentials;
@@ -77,7 +91,7 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
     public PasskeyCreationOptions BeginAdditionalRegistration(string personHandle, string displayName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(personHandle);
-        return Begin(personHandle, displayName, _credentials.FindByHandle(personHandle), additional: true);
+        return Begin(personHandle, displayName, ActiveByHandle(personHandle), additional: true);
     }
 
     /// <inheritdoc />
@@ -99,15 +113,17 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
         string ceremonyId = Base64UrlEncoder.Default.Encode(RandomBytes(16));
         DateTime expiresUtc = DateTime.UtcNow.Add(_options.ChallengeLifetime);
         _challenges.Save(new ConfirmationChallenge { PersonHandle = AssertionPrefix + ceremonyId, ChallengeBytes = challenge, ExpiresUtc = expiresUtc });
-        // The handle binding row is always written (WebAuthn 7.2 step 6): the handle's UTF-8 bytes
-        // for a handle-scoped ceremony, empty for a discoverable one.  Completion refuses a
-        // credential that belongs to anyone else, and fails closed when the row is gone, so a
+        // The handle binding row is always written (WebAuthn 7.2 step 6): a marker byte, then the
+        // handle's UTF-8 bytes for a handle-scoped ceremony.  Completion refuses a credential
+        // that belongs to anyone else, and fails closed when the row is gone or unreadable, so a
         // binding can never be lost without the ceremony being lost with it.
         bool scoped = !string.IsNullOrWhiteSpace(personHandle);
-        byte[] binding = scoped ? Encoding.UTF8.GetBytes(personHandle!) : Array.Empty<byte>();
+        byte[] binding = scoped
+            ? new byte[] { HandleBinding }.Concat(Encoding.UTF8.GetBytes(personHandle!)).ToArray()
+            : new byte[] { DiscoverableBinding };
         _challenges.Save(new ConfirmationChallenge { PersonHandle = AssertionHandlePrefix + ceremonyId, ChallengeBytes = binding, ExpiresUtc = expiresUtc });
         List<PasskeyCredentialDescriptor> allow = scoped
-            ? _credentials.FindByHandle(personHandle!).Select(Describe).ToList()
+            ? ActiveByHandle(personHandle!).Select(Describe).ToList()
             : new List<PasskeyCredentialDescriptor>();
         return BuildRequestOptions(challenge, allow, ceremonyId);
     }
@@ -125,7 +141,7 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
         {
             return SignInFailed(response.Id, PasskeyVerificationFailure.NoPendingChallenge, "no assertion is pending for the ceremony id.");
         }
-        if (scopedHandle is null)
+        if (scopedHandle is null || !TryReadBinding(scopedHandle.ChallengeBytes, out string? boundHandle))
         {
             return SignInFailed(response.Id, PasskeyVerificationFailure.NoPendingChallenge, "the ceremony's handle binding is missing.");
         }
@@ -134,11 +150,12 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
             return SignInFailed(response.Id, PasskeyVerificationFailure.ChallengeExpired, "the assertion challenge has expired.");
         }
         PasskeyCredentialData? credential = _credentials.FindByCredentialId(response.Id);
-        if (credential is null)
+        if (credential is null || credential.Pending)
         {
+            // A pending row's key has not been accepted by the registrar: it is not a credential yet.
             return SignInFailed(response.Id, PasskeyVerificationFailure.UnknownCredential, "no credential is registered under the response id.");
         }
-        if (scopedHandle.ChallengeBytes.Length > 0 && !string.Equals(Encoding.UTF8.GetString(scopedHandle.ChallengeBytes), credential.PersonHandle, StringComparison.Ordinal))
+        if (boundHandle is not null && !string.Equals(boundHandle, credential.PersonHandle, StringComparison.Ordinal))
         {
             return SignInFailed(response.Id, PasskeyVerificationFailure.UnknownCredential, "the credential does not belong to the handle the ceremony was begun for.");
         }
@@ -149,7 +166,7 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
     public PasskeyRequestOptions ToRequestOptions(ConfirmationChallenge challenge)
     {
         ArgumentNullException.ThrowIfNull(challenge);
-        List<PasskeyCredentialDescriptor> allow = _credentials.FindByHandle(challenge.PersonHandle).Select(Describe).ToList();
+        List<PasskeyCredentialDescriptor> allow = ActiveByHandle(challenge.PersonHandle).Select(Describe).ToList();
         return BuildRequestOptions(challenge.ChallengeBytes, allow, null);
     }
 
@@ -160,6 +177,10 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
     /// </summary>
     internal PasskeySignInResult Assert(PasskeyAssertionResponse response, byte[] challengeBytes, PasskeyCredentialData credential)
     {
+        if (credential.Pending)
+        {
+            return SignInFailed(response.Id, PasskeyVerificationFailure.UnknownCredential, "the credential is pending registration.");
+        }
         PasskeyVerification verification = _assertionVerifier.Verify(response, challengeBytes, credential);
         if (!verification.Success || verification.AuthenticatorData is null)
         {
@@ -236,25 +257,34 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
             return RegistrationFailed(personHandle, verification.Failure, verification.Detail);
         }
         ParsedPasskeyCredential credential = verification.Credential;
+        ReapStalePending(personHandle, credential.CredentialId);
         if (_credentials.FindByCredentialId(credential.CredentialId) is not null)
         {
             return RegistrationFailed(personHandle, PasskeyVerificationFailure.CredentialAlreadyRegistered, "the credential id is already registered.");
         }
 
-        IReadOnlyList<PasskeyCredentialData> existing = _credentials.FindByHandle(personHandle);
-        if (!additional && existing.Count > 0)
+        IReadOnlyList<PasskeyCredentialData> held = _credentials.FindByHandle(personHandle);
+        if (!additional && held.Count > 0)
         {
             // Sign-up may not attach a passkey to a person who already has one: that would let an
             // anonymous caller become that person.  Adding a passkey is the authenticated path.
+            // A pending row counts: another sign-up for the handle is in flight.
             return RegistrationFailed(personHandle, PasskeyVerificationFailure.HandleAlreadyRegistered, "the handle already has a passkey; additional passkeys are registered through the authenticated path.");
         }
 
+        // Only accepted credentials describe the person: a pending row may be someone else's
+        // in-flight sign-up attempt for this handle.
+        List<PasskeyCredentialData> existing = held.Where(row => !row.Pending).ToList();
         string pem = credential.PublicKey.Pem;
         string storedUserHandle = existing.Count > 0 ? existing[0].UserHandle : Base64UrlEncoder.Default.Encode(userHandle.ChallengeBytes);
         bool first = existing.Count == 0;
         PasskeyCredentialData stored = BuildCredential(personHandle, credential, pem, storedUserHandle, isRegisteredKeySet: first);
         // Save first so a store fault can never leave the handle bound to a key no credential
-        // row carries; the row is removed when the registrar refuses the material.
+        // row carries.  The row is saved pending whenever the registrar still has to accept its
+        // key: a pending row cannot sign in or confirm an account, so nothing is usable under
+        // the handle until the registrar has answered.  It is removed when the registrar
+        // refuses the material.
+        stored.Pending = first;
         _credentials.Save(stored);
 
         bool keySetRegistered = false;
@@ -273,6 +303,7 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
             {
                 _registrar.Register(keySet);
                 keySetRegistered = true;
+                Activate(stored);
             }
             catch (PublicKeySetConflictException e)
             {
@@ -315,8 +346,17 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
             catch (Exception)
             {
                 // A fault, not a policy answer: never leave a key-set-marked row behind for a
-                // key the registrar did not accept.
-                _credentials.Remove(credential.CredentialId);
+                // key the registrar did not accept.  If the removal faults too, the original
+                // fault is the one to report; the row is still pending, so it is inert and the
+                // next registration for the handle reaps it.
+                try
+                {
+                    _credentials.Remove(credential.CredentialId);
+                }
+                catch (Exception removeFault)
+                {
+                    Log.Warn("Passkey registration for {0}: removing the pending credential {1} after a registrar fault failed ({2})", personHandle, credential.CredentialId, removeFault.Message);
+                }
                 throw;
             }
         }
@@ -331,6 +371,65 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
             Message = keySetRegistered ? "Passkey registered as the account key set" : "Passkey registered",
             Data = stored
         };
+    }
+
+    /// <summary>
+    /// Makes a saved credential usable once the registrar has accepted its key.  If the pending
+    /// row is gone (reaped as stale while the registrar was answering), it is saved again as an
+    /// accepted credential, so an accepted key set never ends up without its credential row.
+    /// </summary>
+    private void Activate(PasskeyCredentialData stored)
+    {
+        stored.Pending = false;
+        if (!_credentials.Activate(stored.CredentialId))
+        {
+            _credentials.Save(stored);
+        }
+    }
+
+    private List<PasskeyCredentialData> ActiveByHandle(string personHandle)
+    {
+        return _credentials.FindByHandle(personHandle).Where(row => !row.Pending).ToList();
+    }
+
+    /// <summary>
+    /// Removes pending rows older than <see cref="PendingCredentialGrace"/> under the handle or
+    /// the credential id: leftovers of a process that stopped between the save and the
+    /// registrar's answer.  Without this a stopped sign-up would hold its handle forever.
+    /// </summary>
+    private void ReapStalePending(string personHandle, string credentialId)
+    {
+        DateTime cutoff = DateTime.UtcNow.Subtract(PendingCredentialGrace);
+        List<PasskeyCredentialData> candidates = _credentials.FindByHandle(personHandle).ToList();
+        PasskeyCredentialData? sameId = _credentials.FindByCredentialId(credentialId);
+        if (sameId is not null && !candidates.Any(row => string.Equals(row.CredentialId, sameId.CredentialId, StringComparison.Ordinal)))
+        {
+            candidates.Add(sameId);
+        }
+        foreach (PasskeyCredentialData row in candidates.Where(row => row.Pending && row.CreatedUtc < cutoff))
+        {
+            Log.Warn("Removing stale pending passkey credential {0} of {1} (saved {2:o}, never accepted by the registrar)", row.CredentialId, row.PersonHandle, row.CreatedUtc);
+            _credentials.Remove(row.CredentialId);
+        }
+    }
+
+    private static bool TryReadBinding(byte[]? binding, out string? boundHandle)
+    {
+        boundHandle = null;
+        if (binding is null || binding.Length == 0)
+        {
+            return false;
+        }
+        if (binding[0] == DiscoverableBinding)
+        {
+            return binding.Length == 1;
+        }
+        if (binding[0] != HandleBinding || binding.Length == 1)
+        {
+            return false;
+        }
+        boundHandle = Encoding.UTF8.GetString(binding, 1, binding.Length - 1);
+        return true;
     }
 
     private static PasskeyCredentialData BuildCredential(string personHandle, ParsedPasskeyCredential credential, string pem, string userHandle, bool isRegisteredKeySet)

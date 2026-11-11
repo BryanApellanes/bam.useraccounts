@@ -17,6 +17,8 @@ public sealed class FaultingPasskeyCredentialRepository : IPasskeyCredentialRepo
 
     public Exception? SaveThrows { get; set; }
 
+    public Exception? RemoveThrows { get; set; }
+
     public int SaveCalls { get; private set; }
 
     public PasskeyCredentialData Save(PasskeyCredentialData credential)
@@ -39,5 +41,14 @@ public sealed class FaultingPasskeyCredentialRepository : IPasskeyCredentialRepo
 
     public void FlagSignCountRegression(string credentialId) => _inner.FlagSignCountRegression(credentialId);
 
-    public bool Remove(string credentialId) => _inner.Remove(credentialId);
+    public bool Activate(string credentialId) => _inner.Activate(credentialId);
+
+    public bool Remove(string credentialId)
+    {
+        if (RemoveThrows is not null)
+        {
+            throw RemoveThrows;
+        }
+        return _inner.Remove(credentialId);
+    }
 }

@@ -79,6 +79,20 @@ public sealed class InMemoryPasskeyCredentialRepository : IPasskeyCredentialRepo
     }
 
     /// <inheritdoc />
+    public bool Activate(string credentialId)
+    {
+        lock (_lock)
+        {
+            if (!_byCredentialId.TryGetValue(credentialId, out PasskeyCredentialData? credential))
+            {
+                return false;
+            }
+            credential.Pending = false;
+            return true;
+        }
+    }
+
+    /// <inheritdoc />
     public bool Remove(string credentialId)
     {
         lock (_lock)

@@ -26,6 +26,11 @@ public interface IPasskeyCredentialRepository
     /// <summary>Flags a credential whose sign counter regressed.</summary>
     void FlagSignCountRegression(string credentialId);
 
+    /// <summary>Clears <see cref="PasskeyCredentialData.Pending"/> on a credential, making it usable.</summary>
+    /// <param name="credentialId">The credential id, base64url.</param>
+    /// <returns>Whether a credential with that id exists (and is now not pending).</returns>
+    bool Activate(string credentialId);
+
     /// <summary>Removes a credential; returns whether one was removed.</summary>
     bool Remove(string credentialId);
 }

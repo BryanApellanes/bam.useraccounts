@@ -42,7 +42,7 @@ public class PasskeyCredentialRepositoriesShould : UnitTestMenuContainer
             CustodyOutcome outcome = Exercise(repository);
             IRepository backing = reg.Get<IRepository>();
             backing.Received().AddType<PasskeyCredentialData>();
-            backing.Received(2).Update(Arg.Any<PasskeyCredentialData>());
+            backing.Received(3).Update(Arg.Any<PasskeyCredentialData>());
             return outcome;
         })
         .TheTest
@@ -73,10 +73,19 @@ public class PasskeyCredentialRepositoriesShould : UnitTestMenuContainer
         PasskeyCredentialData? used = repository.FindByCredentialId("cred-a1");
         PasskeyCredentialData? flagged = repository.FindByCredentialId("cred-b1");
 
+        PasskeyCredentialData pending = Credential("carol", "cred-c1", "uh-carol", start.AddMinutes(3));
+        pending.Pending = true;
+        repository.Save(pending);
+        bool savedPending = repository.FindByCredentialId("cred-c1")?.Pending ?? false;
+        bool activated = repository.Activate("cred-c1");
+        bool pendingAfterActivation = repository.FindByCredentialId("cred-c1")?.Pending ?? true;
+        bool activatedUnknown = repository.Activate("cred-zz");
+
         bool removed = repository.Remove("cred-a2");
         bool removedAgain = repository.Remove("cred-a2");
         int remaining = repository.FindByHandle("alice").Count;
-        return new CustodyOutcome(found, missing, alices, byUserHandle, used, flagged, removed, removedAgain, remaining);
+        return new CustodyOutcome(found, missing, alices, byUserHandle, used, flagged, removed, removedAgain, remaining,
+            new ActivationOutcome(savedPending, activated, pendingAfterActivation, activatedUnknown));
     }
 
     private static void AssertCustody(Because because, CustodyOutcome outcome)
@@ -87,6 +96,9 @@ public class PasskeyCredentialRepositoriesShould : UnitTestMenuContainer
         because.ItsTrue("finds credentials by user handle", outcome.ByUserHandle.Count == 1 && outcome.ByUserHandle[0].CredentialId == "cred-b1");
         because.ItsTrue("records sign count and last use", outcome.Used is not null && outcome.Used.SignCount == 42 && outcome.Used.LastUsedUtc == new DateTime(2026, 11, 3, 1, 0, 0, DateTimeKind.Utc));
         because.ItsTrue("flags a sign count regression", outcome.Flagged is not null && outcome.Flagged.SignCountRegressed);
+        because.ItsTrue("keeps a credential pending as saved", outcome.Activation.SavedPending);
+        because.ItsTrue("activation clears the pending mark", outcome.Activation.Activated && !outcome.Activation.PendingAfterActivation);
+        because.ItsTrue("activating an unknown credential reports false", !outcome.Activation.ActivatedUnknown);
         because.ItsTrue("removes a credential once", outcome.Removed && !outcome.RemovedAgain);
         because.ItsTrue("removal leaves the person's other credential", outcome.Remaining == 1);
     }
@@ -143,5 +155,8 @@ public class PasskeyCredentialRepositoriesShould : UnitTestMenuContainer
     }
 
     private sealed record CustodyOutcome(PasskeyCredentialData? Found, PasskeyCredentialData? Missing, IReadOnlyList<PasskeyCredentialData> Alices,
-        IReadOnlyList<PasskeyCredentialData> ByUserHandle, PasskeyCredentialData? Used, PasskeyCredentialData? Flagged, bool Removed, bool RemovedAgain, int Remaining);
+        IReadOnlyList<PasskeyCredentialData> ByUserHandle, PasskeyCredentialData? Used, PasskeyCredentialData? Flagged, bool Removed, bool RemovedAgain, int Remaining,
+        ActivationOutcome Activation);
+
+    private sealed record ActivationOutcome(bool SavedPending, bool Activated, bool PendingAfterActivation, bool ActivatedUnknown);
 }

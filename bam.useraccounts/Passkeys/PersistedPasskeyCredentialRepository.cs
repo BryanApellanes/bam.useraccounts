@@ -94,6 +94,22 @@ public sealed class PersistedPasskeyCredentialRepository : IPasskeyCredentialRep
     }
 
     /// <inheritdoc />
+    public bool Activate(string credentialId)
+    {
+        lock (_lock)
+        {
+            PasskeyCredentialData? credential = QueryBy(nameof(PasskeyCredentialData.CredentialId), credentialId).FirstOrDefault();
+            if (credential is null)
+            {
+                return false;
+            }
+            credential.Pending = false;
+            _repository.Update(credential);
+            return true;
+        }
+    }
+
+    /// <inheritdoc />
     public bool Remove(string credentialId)
     {
         lock (_lock)

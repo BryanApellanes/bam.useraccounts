@@ -164,7 +164,7 @@ public class PasskeyCeremonyShould : UnitTestMenuContainer
             because.ItsTrue("another person's credential is refused as unknown", !outcome.Crossed.Success && outcome.Crossed.Failure == PasskeyVerificationFailure.UnknownCredential);
             because.ItsTrue("the handle binding row is consumed with the challenge", outcome.ScopedRowConsumed);
             because.ItsTrue("discoverable sign-in stays unbound and names the person", outcome.Discovered.Success && outcome.Discovered.PersonHandle == "other-person");
-            because.ItsTrue("a discoverable ceremony writes and consumes an empty binding row", outcome.DiscoverableRowConsumed);
+            because.ItsTrue("a discoverable ceremony writes and consumes its binding row", outcome.DiscoverableRowConsumed);
             because.ItsTrue("a ceremony begun for the person's own handle succeeds", outcome.OwnResult.Success, outcome.OwnResult.Message);
             because.ItsTrue("a ceremony whose binding row is gone fails closed as no pending challenge", !outcome.Orphaned.Success && outcome.Orphaned.Failure == PasskeyVerificationFailure.NoPendingChallenge);
             because.ItsTrue("the orphaned ceremony's challenge is consumed", outcome.OrphanedChallengeConsumed);
@@ -433,6 +433,192 @@ public class PasskeyCeremonyShould : UnitTestMenuContainer
         .UnlessItFailed();
     }
 
+    [UnitTest]
+    public void KeepACredentialUnusableUntilTheRegistrarAccepts()
+    {
+        After.Setup(reg => reg.Set(new PasskeyFixture()))
+        .When<PasskeyFixture>("signs in with the in-flight credential from inside the registrar", (fixture, reg) =>
+        {
+            SyntheticAuthenticator inFlight = new SyntheticAuthenticator();
+            List<PasskeySignInResult> during = new List<PasskeySignInResult>();
+            List<int> allowedDuring = new List<int>();
+            List<bool> pendingDuring = new List<bool>();
+            fixture.DuringRegister = keySet =>
+            {
+                // The registrar has been asked and has not answered: the saved row must be inert.
+                inFlight.SignCount = 2;
+                during.Add(fixture.SignIn(inFlight, null));
+                during.Add(fixture.SignIn(inFlight, keySet.KeySetHandle));
+                allowedDuring.Add(fixture.Ceremony.BeginAssertion(keySet.KeySetHandle).AllowCredentials.Count);
+                pendingDuring.Add(fixture.Credentials.FindByCredentialId(inFlight.CredentialIdBase64Url)?.Pending ?? false);
+            };
+
+            fixture.RegistrarThrows = new PublicKeySetConflictException("alice-device-key");
+            PasskeyRegistrationResult conflict = fixture.Register(inFlight, "alice-device-key");
+            bool conflictStored = fixture.Credentials.FindByCredentialId(inFlight.CredentialIdBase64Url) is not null;
+
+            inFlight = new SyntheticAuthenticator();
+            fixture.RegistrarThrows = new UnauthorizedSuccessorException("revoked-person");
+            PasskeyRegistrationResult successor = fixture.Register(inFlight, "revoked-person");
+            bool successorStored = fixture.Credentials.FindByCredentialId(inFlight.CredentialIdBase64Url) is not null;
+
+            inFlight = new SyntheticAuthenticator();
+            fixture.RegistrarThrows = new InvalidOperationException("store offline");
+            Exception? fault = null;
+            try
+            {
+                fixture.Register(inFlight, "faulting-person");
+            }
+            catch (Exception e)
+            {
+                fault = e;
+            }
+            bool faultStored = fixture.Credentials.FindByCredentialId(inFlight.CredentialIdBase64Url) is not null;
+
+            inFlight = new SyntheticAuthenticator();
+            fixture.RegistrarThrows = null;
+            PasskeyRegistrationResult accepted = fixture.Register(inFlight);
+            fixture.DuringRegister = null;
+            PasskeyCredentialData? acceptedRow = fixture.Credentials.FindByCredentialId(inFlight.CredentialIdBase64Url);
+            inFlight.SignCount = 3;
+            PasskeySignInResult afterAccepted = fixture.SignIn(inFlight);
+            return new PendingOutcome(during, allowedDuring, pendingDuring, conflict, conflictStored, successor, successorStored, fault, faultStored, accepted, acceptedRow, afterAccepted);
+        })
+        .TheTest
+        .ShouldPass<PendingOutcome>((because, outcome) =>
+        {
+            because.ItsTrue("the registrar was reached four times, with two sign-in attempts each", outcome.During.Count == 8 && outcome.PendingDuring.Count == 4);
+            because.ItsTrue("the saved row is pending while the registrar decides", outcome.PendingDuring.All(pending => pending));
+            because.ItsTrue("no discoverable or handle-scoped sign-in succeeds with a pending credential", outcome.During.All(result => !result.Success && result.PersonHandle is null));
+            because.ItsTrue("a pending credential is an unknown credential", outcome.During.All(result => result.Failure == PasskeyVerificationFailure.UnknownCredential));
+            because.ItsTrue("a pending credential is not offered in allowCredentials", outcome.AllowedDuring.All(count => count == 0));
+            because.ItsTrue("the conflict is refused and nothing stays stored", !outcome.Conflict.Success && outcome.Conflict.Failure == PasskeyVerificationFailure.HandleAlreadyRegistered && !outcome.ConflictStored);
+            because.ItsTrue("the successor refusal leaves nothing stored", !outcome.Successor.Success && !outcome.SuccessorStored);
+            because.ItsTrue("the fault propagates and leaves nothing stored", outcome.Fault is InvalidOperationException && !outcome.FaultStored);
+            because.ItsTrue("an accepted registration activates the credential", outcome.Accepted.Success && outcome.Accepted.KeySetRegistered && outcome.AcceptedRow is not null && !outcome.AcceptedRow.Pending);
+            because.ItsTrue("the accepted credential signs in", outcome.AfterAccepted.Success && outcome.AfterAccepted.PersonHandle == PasskeyFixture.Handle);
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    [UnitTest]
+    public void ReapAPendingCredentialLeftBehind()
+    {
+        After.Setup(reg => reg.Set(new PasskeyFixture()))
+        .When<PasskeyFixture>("meets pending rows left by a stopped process and by a sign-up in flight", (fixture, reg) =>
+        {
+            DateTime now = DateTime.UtcNow;
+            fixture.Credentials.Save(PendingRow(PasskeyFixture.Handle, "stale-cred", now.Subtract(PasskeyCeremony.PendingCredentialGrace).AddMinutes(-1)));
+            PasskeyRegistrationResult afterStale = fixture.Register(new SyntheticAuthenticator());
+            bool staleRemains = fixture.Credentials.FindByCredentialId("stale-cred") is not null;
+
+            fixture.Credentials.Save(PendingRow("busy-handle", "fresh-cred", now));
+            PasskeyRegistrationResult whileInFlight = fixture.Register(new SyntheticAuthenticator(), "busy-handle");
+            bool freshRemains = fixture.Credentials.FindByCredentialId("fresh-cred") is not null;
+            SyntheticAuthenticator owner = new SyntheticAuthenticator();
+            PasskeyRegistrationResult ownerAdds = fixture.RegisterAdditional(owner, "busy-handle");
+            PasskeyCredentialData? ownerRow = fixture.Credentials.FindByCredentialId(owner.CredentialIdBase64Url);
+
+            FaultingPasskeyCredentialRepository faulting = new FaultingPasskeyCredentialRepository(new InMemoryPasskeyCredentialRepository());
+            PasskeyFixture faultingFixture = new PasskeyFixture(credentials: faulting);
+            SyntheticAuthenticator doubleFault = new SyntheticAuthenticator();
+            faultingFixture.RegistrarThrows = new InvalidOperationException("registrar down");
+            faulting.RemoveThrows = new InvalidOperationException("store down");
+            Exception? reported = null;
+            try
+            {
+                faultingFixture.Register(doubleFault);
+            }
+            catch (Exception e)
+            {
+                reported = e;
+            }
+            faulting.RemoveThrows = null;
+            faultingFixture.RegistrarThrows = null;
+            PasskeyCredentialData? survivor = faulting.FindByCredentialId(doubleFault.CredentialIdBase64Url);
+            doubleFault.SignCount = 2;
+            PasskeySignInResult survivorSignIn = faultingFixture.SignIn(doubleFault);
+            return new ReapOutcome(afterStale, staleRemains, whileInFlight, freshRemains, ownerAdds, ownerRow, reported, survivor, survivorSignIn);
+        })
+        .TheTest
+        .ShouldPass<ReapOutcome>((because, outcome) =>
+        {
+            because.ItsTrue("a stale pending row does not hold its handle", outcome.AfterStale.Success && outcome.AfterStale.KeySetRegistered);
+            because.ItsTrue("and is removed", !outcome.StaleRemains);
+            because.ItsTrue("a fresh pending row refuses a second sign-up for the handle", !outcome.WhileInFlight.Success && outcome.WhileInFlight.Failure == PasskeyVerificationFailure.HandleAlreadyRegistered);
+            because.ItsTrue("and is left alone", outcome.FreshRemains);
+            because.ItsTrue("the authenticated path ignores someone else's pending row", outcome.OwnerAdds.Success && outcome.OwnerAdds.KeySetRegistered);
+            because.ItsTrue("and never adopts its user handle", outcome.OwnerRow is not null && outcome.OwnerRow.UserHandle != "uh-in-flight" && !outcome.OwnerRow.Pending);
+            because.ItsTrue("when the cleanup faults too, the registrar's fault is the one reported", outcome.Reported is InvalidOperationException && outcome.Reported.Message == "registrar down");
+            because.ItsTrue("the row that could not be removed is still pending", outcome.Survivor is not null && outcome.Survivor.Pending);
+            because.ItsTrue("so it cannot sign in", !outcome.SurvivorSignIn.Success && outcome.SurvivorSignIn.Failure == PasskeyVerificationFailure.UnknownCredential);
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    [UnitTest]
+    public void FailClosedOnAnUnreadableHandleBinding()
+    {
+        After.Setup(reg => reg.Set(new PasskeyFixture()))
+        .When<PasskeyFixture>("completes assertions whose binding row was replaced", (fixture, reg) =>
+        {
+            SyntheticAuthenticator authenticator = new SyntheticAuthenticator();
+            fixture.Register(authenticator);
+            List<PasskeySignInResult> results = new List<PasskeySignInResult>();
+            foreach (byte[] replacement in new byte[][] { Array.Empty<byte>(), new byte[] { 0x02, 0x41 }, new byte[] { 0x00, 0x41 }, new byte[] { 0x01 }, SyntheticAuthenticator.RandomBytes(32) })
+            {
+                PasskeyRequestOptions request = fixture.Ceremony.BeginAssertion(PasskeyFixture.Handle);
+                ConfirmationChallenge? binding = fixture.Challenges.Take("passkey-assertion-handle:" + request.CeremonyId);
+                fixture.Challenges.Save(new ConfirmationChallenge { PersonHandle = "passkey-assertion-handle:" + request.CeremonyId, ChallengeBytes = replacement, ExpiresUtc = binding!.ExpiresUtc });
+                authenticator.SignCount++;
+                results.Add(fixture.Ceremony.CompleteAssertion(authenticator.Assert(Base64UrlEncoder.Default.Decode(request.Challenge), request.CeremonyId)));
+            }
+            authenticator.SignCount++;
+            PasskeySignInResult intact = fixture.SignIn(authenticator);
+            PasskeySignInResult discoverable = fixture.SignIn(Bump(authenticator), null);
+            return new UnreadableBindingOutcome(results, intact, discoverable);
+        })
+        .TheTest
+        .ShouldPass<UnreadableBindingOutcome>((because, outcome) =>
+        {
+            because.ItsTrue("an empty, unknown-marker, over-long, truncated or random binding row never signs in", outcome.Replaced.All(result => !result.Success));
+            because.ItsTrue("the first four are a lost binding", outcome.Replaced.Take(4).All(result => result.Failure == PasskeyVerificationFailure.NoPendingChallenge));
+            because.ItsTrue("an intact handle-scoped ceremony signs in", outcome.Intact.Success);
+            because.ItsTrue("an intact discoverable ceremony signs in", outcome.Discoverable.Success);
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    private static SyntheticAuthenticator Bump(SyntheticAuthenticator authenticator)
+    {
+        authenticator.SignCount++;
+        return authenticator;
+    }
+
+    private static PasskeyCredentialData PendingRow(string handle, string credentialId, DateTime createdUtc)
+    {
+        return new PasskeyCredentialData
+        {
+            PersonHandle = handle,
+            CredentialId = credentialId,
+            UserHandle = "uh-in-flight",
+            PublicKeyPem = new SyntheticAuthenticator().PublicKeyPem,
+            Algorithm = -7,
+            CreatedUtc = createdUtc,
+            IsRegisteredKeySet = true,
+            Pending = true
+        };
+    }
+
+    private sealed record PendingOutcome(List<PasskeySignInResult> During, List<int> AllowedDuring, List<bool> PendingDuring, PasskeyRegistrationResult Conflict, bool ConflictStored,
+        PasskeyRegistrationResult Successor, bool SuccessorStored, Exception? Fault, bool FaultStored, PasskeyRegistrationResult Accepted, PasskeyCredentialData? AcceptedRow,
+        PasskeySignInResult AfterAccepted);
+    private sealed record ReapOutcome(PasskeyRegistrationResult AfterStale, bool StaleRemains, PasskeyRegistrationResult WhileInFlight, bool FreshRemains, PasskeyRegistrationResult OwnerAdds,
+        PasskeyCredentialData? OwnerRow, Exception? Reported, PasskeyCredentialData? Survivor, PasskeySignInResult SurvivorSignIn);
+    private sealed record UnreadableBindingOutcome(List<PasskeySignInResult> Replaced, PasskeySignInResult Intact, PasskeySignInResult Discoverable);
     private sealed record CreationOutcome(PasskeyCreationOptions Options, string Json);
     private sealed record RegistrationOutcome(PasskeyFixture Fixture, SyntheticAuthenticator Authenticator, PasskeyCreationOptions Creation, PasskeyRegistrationResult Result, PasskeyCredentialData? Stored, PasskeyRegistrationResult Again);
     private sealed record SecondOutcome(PasskeyFixture Fixture, SyntheticAuthenticator First, PasskeyRegistrationResult FirstResult, string UserHandle, PasskeyCreationOptions SignUpAgain,

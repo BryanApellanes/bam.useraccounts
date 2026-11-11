@@ -104,7 +104,7 @@ public sealed class PasskeyOptions
     /// <param name="origin">The origin from <c>clientDataJSON</c>.</param>
     public bool IsOriginAllowed(string? origin)
     {
-        if (string.IsNullOrEmpty(origin) || !Uri.TryCreate(origin, UriKind.Absolute, out Uri? presented))
+        if (string.IsNullOrEmpty(origin) || origin.Any(char.IsWhiteSpace) || !Uri.TryCreate(origin, UriKind.Absolute, out Uri? presented))
         {
             return false;
         }

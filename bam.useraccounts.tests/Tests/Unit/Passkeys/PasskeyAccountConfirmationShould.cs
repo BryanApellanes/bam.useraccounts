@@ -127,7 +127,18 @@ public class PasskeyAccountConfirmationShould : UnitTestMenuContainer
             ConfirmationChallenge secondChallenge = harness.Confirmation.CreateChallenge(PasskeyFixture.Handle);
             ConfirmationResult secondCredential = harness.Confirmation.VerifySignedChallenge(PasskeyFixture.Handle, harness.Answer(secondChallenge, second));
 
-            return new RefusalOutcome(noPending, garbage, otherPersonsCredential, wrongBytes, noKeySet, foreignKeySet, secondCredential);
+            // A credential whose key the registrar has not accepted yet confirms nothing, even
+            // when everything else about the assertion is valid.
+            harness.Fixture.Credentials.FindByCredentialId(harness.Authenticator.CredentialIdBase64Url)!.Pending = true;
+            harness.Authenticator.SignCount = 9;
+            ConfirmationChallenge pendingChallenge = harness.Confirmation.CreateChallenge(PasskeyFixture.Handle);
+            ConfirmationResult pendingCredential = harness.Confirmation.VerifySignedChallenge(PasskeyFixture.Handle, harness.Answer(pendingChallenge));
+            harness.Fixture.Credentials.Activate(harness.Authenticator.CredentialIdBase64Url);
+            harness.Authenticator.SignCount = 10;
+            ConfirmationChallenge activatedChallenge = harness.Confirmation.CreateChallenge(PasskeyFixture.Handle);
+            ConfirmationResult activatedCredential = harness.Confirmation.VerifySignedChallenge(PasskeyFixture.Handle, harness.Answer(activatedChallenge));
+
+            return new RefusalOutcome(noPending, garbage, otherPersonsCredential, wrongBytes, noKeySet, foreignKeySet, secondCredential, pendingCredential, activatedCredential);
         })
         .TheTest
         .ShouldPass<RefusalOutcome>((because, outcome) =>
@@ -139,11 +150,14 @@ public class PasskeyAccountConfirmationShould : UnitTestMenuContainer
             because.ItsTrue("missing key set fails generically", !outcome.NoKeySet.Confirmed && outcome.NoKeySet.Message == DeviceKeyAccountConfirmation.VerificationFailedMessage);
             because.ItsTrue("key-set credential whose key is not the registered key set fails", !outcome.ForeignKeySet.Confirmed);
             because.ItsTrue("a second credential added through the authenticated path confirms", outcome.SecondCredential.Confirmed, outcome.SecondCredential.Message);
+            because.ItsTrue("a pending credential fails generically", !outcome.PendingCredential.Confirmed && outcome.PendingCredential.Message == DeviceKeyAccountConfirmation.VerificationFailedMessage);
+            because.ItsTrue("the same credential confirms once activated", outcome.ActivatedCredential.Confirmed, outcome.ActivatedCredential.Message);
         })
         .SoBeHappy()
         .UnlessItFailed();
     }
 
     private sealed record ConfirmOutcome(DateTime Before, ConfirmationChallenge Challenge, PasskeyRequestOptions Request, ConfirmationResult Result, ConfirmationResult Again, List<IActor> IssuedFor, long SignCount);
-    private sealed record RefusalOutcome(ConfirmationResult NoPending, ConfirmationResult Garbage, ConfirmationResult OtherPersonsCredential, ConfirmationResult WrongBytes, ConfirmationResult NoKeySet, ConfirmationResult ForeignKeySet, ConfirmationResult SecondCredential);
+    private sealed record RefusalOutcome(ConfirmationResult NoPending, ConfirmationResult Garbage, ConfirmationResult OtherPersonsCredential, ConfirmationResult WrongBytes, ConfirmationResult NoKeySet, ConfirmationResult ForeignKeySet, ConfirmationResult SecondCredential,
+        ConfirmationResult PendingCredential, ConfirmationResult ActivatedCredential);
 }

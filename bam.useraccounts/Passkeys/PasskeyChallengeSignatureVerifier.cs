@@ -46,7 +46,7 @@ public sealed class PasskeyChallengeSignatureVerifier : IChallengeSignatureVerif
             return Failed(signerPublicKey, "assertion names no credential.");
         }
         PasskeyCredentialData? credential = _credentials.FindByCredentialId(response.Id);
-        if (credential is null || !string.Equals(credential.PersonHandle, challenge.PersonHandle, StringComparison.Ordinal))
+        if (credential is null || credential.Pending || !string.Equals(credential.PersonHandle, challenge.PersonHandle, StringComparison.Ordinal))
         {
             return Failed(signerPublicKey, "credential is not registered to the challenged handle.");
         }
