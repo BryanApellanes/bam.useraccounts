@@ -125,6 +125,13 @@ public class PasskeyTextShould : UnitTestMenuContainer
                 byte[] assertionChallenge = Base64UrlEncoder.Default.Decode(request.Challenge);
                 PasskeySignInResult signIn = fixture.Ceremony.CompleteAssertion(authenticator.Assert(assertionChallenge, request.CeremonyId, id: "unknown\r\n" + Forged + "-CREDENTIAL" + U(0x2028) + "" + new string('D', 20000)));
 
+                // A detail longer than the cap: Newtonsoft quotes the caller's 3,000-character property name.
+                PasskeyCreationOptions longCreation = fixture.Ceremony.BeginRegistration("long-detail", "Jane");
+                byte[] longChallenge = Base64UrlEncoder.Default.Decode(longCreation.Challenge);
+                byte[] longClientData = System.Text.Encoding.UTF8.GetBytes("{\"" + new string('p', 3000) + "\":x}");
+                PasskeyVerification longVerification = new PasskeyRegistrationVerifier(fixture.Options).Verify(authenticator.Register(longChallenge, clientData: longClientData), longChallenge);
+                fixture.Ceremony.CompleteRegistration("long-detail", authenticator.Register(longChallenge, clientData: longClientData));
+
                 IReadOnlyList<LogEvent> events = logger.Events;
                 List<string> values = events.SelectMany(e => e.MessageVariableValues ?? Array.Empty<string?>()).Where(v => v is not null).Select(v => v!).ToList();
                 return new LogOutcome(
@@ -133,11 +140,15 @@ public class PasskeyTextShould : UnitTestMenuContainer
                     values.Count == 0 ? 0 : values.Max(v => v.Length),
                     values.Any(v => v.Contains(Forged + "-HANDLE")),
                     values.Any(v => v.Contains(Forged + "-ORIGIN")),
-                    values.Any(v => v.Contains(Forged + "-CREDENTIAL")));
+                    values.Any(v => v.Contains(Forged + "-CREDENTIAL")),
+                    longVerification.Detail!.Length > PasskeyVerification.MaxDetailLength,
+                    longVerification.Detail.Substring(longVerification.Detail.LastIndexOf("...(+", StringComparison.Ordinal)),
+                    values.Any(v => v == longVerification.Detail));
             }
             finally
             {
                 Log.Default = previous;
+                logger.StopLoggingThread();
             }
         })
         .TheTest
@@ -146,12 +157,14 @@ public class PasskeyTextShould : UnitTestMenuContainer
             because.ItsTrue("the sign-up is refused", !outcome.Registered);
             because.ItsTrue("the sign-in is refused", !outcome.SignedIn);
             because.ItsTrue("the caller still gets only the generic message", outcome.RegistrationMessage is not null && !outcome.RegistrationMessage.Contains(Forged));
-            because.ItsTrue("both failures are logged, events " + outcome.Events, outcome.Events == 2);
+            because.ItsTrue("all three failures are logged, events " + outcome.Events, outcome.Events == 3);
             because.ItsTrue("no logged value contains a line break", !outcome.AnyLineBreak);
-            because.ItsTrue("no logged value is unbounded, longest " + outcome.LongestValue, outcome.LongestValue < 450);
+            because.ItsTrue("no logged value is unbounded, longest " + outcome.LongestValue, outcome.LongestValue < 460);
             because.ItsTrue("the handle is still logged, inline", outcome.HandleLogged);
             because.ItsTrue("the origin is still logged, inline", outcome.OriginLogged);
             because.ItsTrue("the credential id is still logged, inline", outcome.CredentialLogged);
+            because.ItsTrue("the long detail was cut by Fail", outcome.LongDetailWasCut);
+            because.ItsTrue("the log carries that detail unchanged, with the real dropped count " + outcome.LongDetailNote, outcome.LongDetailLoggedUnchanged);
         })
         .SoBeHappy()
         .UnlessItFailed();
@@ -203,5 +216,5 @@ public class PasskeyTextShould : UnitTestMenuContainer
 
     private sealed record DetailOutcome(PasskeyVerificationFailure OriginFailure, bool OriginHasLineBreak, int OriginDetailLength, bool OriginStillNamed, PasskeyVerificationFailure TypeFailure, bool TypeHasLineBreak, bool TypeStillNamed, bool DirectHasLineBreak, int DirectLength);
 
-    private sealed record LogOutcome(bool Registered, bool SignedIn, string? RegistrationMessage, int Events, bool AnyLineBreak, int LongestValue, bool HandleLogged, bool OriginLogged, bool CredentialLogged);
+    private sealed record LogOutcome(bool Registered, bool SignedIn, string? RegistrationMessage, int Events, bool AnyLineBreak, int LongestValue, bool HandleLogged, bool OriginLogged, bool CredentialLogged, bool LongDetailWasCut, string LongDetailNote, bool LongDetailLoggedUnchanged);
 }

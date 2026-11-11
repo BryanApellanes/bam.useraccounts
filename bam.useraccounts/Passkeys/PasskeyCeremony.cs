@@ -466,12 +466,12 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
             }
             if (accepted)
             {
-                Log.Warn("Activating stale pending passkey credential {0} of {1} (saved {2:o}): the registrar holds its key as the handle's key set", PasskeyText.Printable(row.CredentialId), PasskeyText.Printable(row.PersonHandle), row.CreatedUtc);
+                Log.Warn("Activating stale pending passkey credential {0} of {1} (saved {2}): the registrar holds its key as the handle's key set", PasskeyText.Printable(row.CredentialId), PasskeyText.Printable(row.PersonHandle), row.CreatedUtc.ToString("o", System.Globalization.CultureInfo.InvariantCulture));
                 _credentials.Activate(row.PersonHandle, row.CredentialId);
             }
             else
             {
-                Log.Warn("Removing stale pending passkey credential {0} of {1} (saved {2:o}, never accepted by the registrar)", PasskeyText.Printable(row.CredentialId), PasskeyText.Printable(row.PersonHandle), row.CreatedUtc);
+                Log.Warn("Removing stale pending passkey credential {0} of {1} (saved {2}, never accepted by the registrar)", PasskeyText.Printable(row.CredentialId), PasskeyText.Printable(row.PersonHandle), row.CreatedUtc.ToString("o", System.Globalization.CultureInfo.InvariantCulture));
                 _credentials.Remove(row.PersonHandle, row.CredentialId);
             }
         }
@@ -565,14 +565,16 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
     private static PasskeyRegistrationResult RegistrationFailed(string personHandle, PasskeyVerificationFailure failure, string? detail)
     {
         // The handle and, through the detail, the client's own bytes are caller-chosen: one bounded line each.
-        Log.Warn("Passkey registration for {0} failed: {1} ({2})", PasskeyText.Printable(personHandle), failure, PasskeyText.Printable(detail ?? string.Empty, PasskeyVerification.MaxDetailLength));
+        // A detail from PasskeyVerification.Fail is already printable and may end in a truncation note, so the
+        // cap here leaves room for it; a raw detail (a registrar exception message) is cut here for the first time.
+        Log.Warn("Passkey registration for {0} failed: {1} ({2})", PasskeyText.Printable(personHandle), failure, PasskeyText.Printable(detail ?? string.Empty, PasskeyVerification.MaxLoggedDetailLength));
         return new PasskeyRegistrationResult { Success = false, Failure = failure, Message = VerificationFailedMessage };
     }
 
     private static PasskeySignInResult SignInFailed(string? credentialId, PasskeyVerificationFailure failure, string? detail)
     {
         // The credential id comes straight from the response when no stored credential matched it.
-        Log.Warn("Passkey assertion for credential {0} failed: {1} ({2})", PasskeyText.Printable(credentialId), failure, PasskeyText.Printable(detail ?? string.Empty, PasskeyVerification.MaxDetailLength));
+        Log.Warn("Passkey assertion for credential {0} failed: {1} ({2})", PasskeyText.Printable(credentialId), failure, PasskeyText.Printable(detail ?? string.Empty, PasskeyVerification.MaxLoggedDetailLength));
         return new PasskeySignInResult { Success = false, Failure = failure, Message = VerificationFailedMessage };
     }
 }

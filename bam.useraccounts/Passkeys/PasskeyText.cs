@@ -22,7 +22,12 @@ public static class PasskeyText
     /// unassigned and private-use code points and lone surrogates each become
     /// <see cref="Replacement"/>, and anything past <paramref name="maxLength"/> characters is cut
     /// and replaced by a note of how much was dropped.  Ordinary letters, digits, punctuation and
-    /// spaces in any script are kept, so a legitimate value reads as it was sent.
+    /// spaces in any script are kept, so a legitimate value reads as it was sent, with two
+    /// exceptions: a replaced character is not recoverable (it is replaced, not escaped, and
+    /// <see cref="Replacement"/> is itself a legal character in a URL, so a <c>?</c> in the
+    /// output may be either), and zero-width joiners are format characters, so an emoji sequence
+    /// or a word that uses one shows a <c>?</c> in the middle.  The result is for reading, never
+    /// for comparing or parsing.
     /// </summary>
     /// <param name="text">The caller-chosen text; null reads as <c>(none)</c>.</param>
     /// <param name="maxLength">The most characters of the text to keep; values below one keep one.</param>

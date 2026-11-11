@@ -40,7 +40,8 @@ public static class PasskeyJson
         }
         catch (JsonException e)
         {
-            throw new PasskeyFormatException($"JSON is not a valid {typeof(T).Name}: {e.Message}", e);
+            // The parser's message quotes the caller's own property names and values; hosts catch and log this exception.
+            throw new PasskeyFormatException($"JSON is not a valid {typeof(T).Name}: {PasskeyText.Printable(e.Message, PasskeyVerification.MaxDetailLength)}", e);
         }
     }
 }
