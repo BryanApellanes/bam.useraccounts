@@ -200,9 +200,11 @@ registry.AddPasskeys(new PasskeyOptions
 
 App origins are matched as exact, case-sensitive strings and only against this list. The browser list keeps its own rule (scheme, host and port), and the two never cross. The list is empty by default, so no Android app is accepted until one is listed. A browser origin is still required: the relying-party domain has to exist to serve the association files.
 
-Every key that signs the app needs its own entry: the debug key on each developer machine, the upload key, and the Play app signing key if Google re-signs the release. Leave debug hashes out of production configuration.
+Every certificate a device might see the app signed with needs its own entry: the Play app signing key for releases installed from Play, and the debug key of each developer machine for local builds. With Play app signing the upload key never reaches a device, so list it only if you sideload builds signed with it. Leave debug hashes out of production configuration.
 
-To get the value, take the SHA-256 fingerprint of the signing certificate (`keytool -list -v -keystore <keystore> -alias <alias>`, or the Play Console's app signing page), convert the 32 bytes from hex to base64url, and drop the `=` padding. The surest check is to run one ceremony from the app and read the origin the server refused: with the list empty the failure detail names it. Sources disagree on whether some Android versions send a SHA-1 hash here; the server compares the whole string, so whatever the device sends is what goes in the list.
+To get the value, take the SHA-256 fingerprint of the signing certificate (`keytool -list -v -keystore <keystore> -alias <alias>`, or the Play Console's app signing page), convert the 32 bytes from hex to base64url, and drop the `=` padding. This is the recipe in Google's passkey guide (https://developer.android.com/identity/passkeys/create-passkeys). The list takes unpadded base64url only (`A-Z`, `a-z`, `0-9`, `-`, `_`); anything else is refused at startup.
+
+To confirm the value you computed, run one ceremony from the app before listing it and look at the server log: the refusal is logged as a warning that names the origin the app presented. The app itself only ever sees a generic failure. Treat the log as a check on your computation, not as the source of the value, since anyone can send any origin.
 
 iOS and Mac Catalyst apps present `https://<rp id>`, so `AllowedOrigins` already covers them.
 

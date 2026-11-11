@@ -190,6 +190,27 @@ public class PasskeyAppOriginsShould : UnitTestMenuContainer
         .UnlessItFailed();
     }
 
+    [UnitTest]
+    public void RefuseNonHttpOriginsEvenOnUnvalidatedOptions()
+    {
+        After.Setup(reg => reg.Set(PasskeyFixture.DefaultOptions()))
+        .When<PasskeyOptions>("lists an ftp origin without calling Validate and presents it", (options, reg) =>
+        {
+            // Validate would refuse this list; the origin check must not depend on Validate having run.
+            options.AllowedOrigins = new List<string> { "ftp://lumberjack.live", "https://lumberjack.live" };
+            return new SchemeOutcome(options.IsOriginAllowed("ftp://lumberjack.live"), options.IsOriginAllowed("https://lumberjack.live"), options.IsOriginAllowed("HTTPS://lumberjack.live"));
+        })
+        .TheTest
+        .ShouldPass<SchemeOutcome>((because, outcome) =>
+        {
+            because.ItsTrue("a listed ftp origin is refused", !outcome.Ftp);
+            because.ItsTrue("the https origin is allowed", outcome.Https);
+            because.ItsTrue("the scheme is compared case-insensitively, as before", outcome.UppercaseHttps);
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
     private static PasskeyOptions AppOptions()
     {
         PasskeyOptions options = PasskeyFixture.DefaultOptions();
@@ -225,6 +246,8 @@ public class PasskeyAppOriginsShould : UnitTestMenuContainer
             CreatedUtc = DateTime.UtcNow
         };
     }
+
+    private sealed record SchemeOutcome(bool Ftp, bool Https, bool UppercaseHttps);
 
     private sealed record MatchOutcome(bool Listed, bool Unlisted, bool Lowercased, bool Uppercased, bool Extended, bool Truncated, bool WithWhitespace, bool PrefixOnly, bool UppercaseScheme, bool UrlShaped, bool OtherScheme, bool BrowserOrigin, bool ForeignBrowserOrigin, bool ListedWithoutConfiguration, int DefaultCount);
 

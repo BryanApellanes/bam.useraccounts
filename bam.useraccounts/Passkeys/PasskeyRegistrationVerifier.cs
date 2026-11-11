@@ -157,7 +157,7 @@ internal static class PasskeyEncoding
     {
         if (!string.Equals(clientData.Type, expectedType, StringComparison.Ordinal))
         {
-            return PasskeyVerification.Fail(PasskeyVerificationFailure.WrongType, $"clientDataJSON type is '{clientData.Type}', expected '{expectedType}'.");
+            return PasskeyVerification.Fail(PasskeyVerificationFailure.WrongType, $"clientDataJSON type is '{PasskeyText.Printable(clientData.Type)}', expected '{expectedType}'.");
         }
         byte[]? presentedChallenge = TryDecode(clientData.Challenge);
         if (presentedChallenge is null || !CryptographicOperations.FixedTimeEquals(presentedChallenge, expectedChallenge))
@@ -166,7 +166,7 @@ internal static class PasskeyEncoding
         }
         if (!options.IsOriginAllowed(clientData.Origin))
         {
-            return PasskeyVerification.Fail(PasskeyVerificationFailure.OriginNotAllowed, $"clientDataJSON origin '{clientData.Origin}' is not allowed.");
+            return PasskeyVerification.Fail(PasskeyVerificationFailure.OriginNotAllowed, $"clientDataJSON origin '{PasskeyText.Printable(clientData.Origin)}' is not allowed.");
         }
         return null;
     }

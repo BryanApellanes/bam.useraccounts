@@ -56,8 +56,9 @@ public sealed class PasskeyOptions
 
     /// <summary>
     /// Checks the options are coherent: a bare lowercase host as <see cref="RpId"/>, at least one
-    /// absolute http(s) origin whose host is the RP id or a subdomain of it, and at least one
-    /// supported algorithm.
+    /// absolute http(s) origin whose host is the RP id or a subdomain of it, app origins that are
+    /// each <see cref="AndroidAppOriginPrefix"/> followed by unpadded base64url (the list may be
+    /// empty but not null), and at least one supported algorithm.
     /// </summary>
     /// <exception cref="ArgumentException">The options are not valid.</exception>
     public void Validate()

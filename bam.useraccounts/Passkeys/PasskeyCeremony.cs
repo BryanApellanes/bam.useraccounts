@@ -363,7 +363,7 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
                 {
                     if (IsRegisteredKeySetOf(stored))
                     {
-                        Log.Warn("Passkey registration for {0}: the registrar faulted but holds the key of credential {1}; the row is kept pending", personHandle, credential.CredentialId);
+                        Log.Warn("Passkey registration for {0}: the registrar faulted but holds the key of credential {1}; the row is kept pending", PasskeyText.Printable(personHandle), PasskeyText.Printable(credential.CredentialId));
                     }
                     else
                     {
@@ -372,7 +372,7 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
                 }
                 catch (Exception cleanupFault)
                 {
-                    Log.Warn("Passkey registration for {0}: the pending credential {1} is left as it is after a registrar fault ({2})", personHandle, credential.CredentialId, cleanupFault.Message);
+                    Log.Warn("Passkey registration for {0}: the pending credential {1} is left as it is after a registrar fault ({2})", PasskeyText.Printable(personHandle), PasskeyText.Printable(credential.CredentialId), PasskeyText.Printable(cleanupFault.Message, PasskeyVerification.MaxDetailLength));
                 }
                 throw;
             }
@@ -461,17 +461,17 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
             }
             catch (Exception e)
             {
-                Log.Warn("Stale pending passkey credential {0} of {1} left as it is: the registrar could not be asked ({2})", row.CredentialId, row.PersonHandle, e.Message);
+                Log.Warn("Stale pending passkey credential {0} of {1} left as it is: the registrar could not be asked ({2})", PasskeyText.Printable(row.CredentialId), PasskeyText.Printable(row.PersonHandle), PasskeyText.Printable(e.Message, PasskeyVerification.MaxDetailLength));
                 continue;
             }
             if (accepted)
             {
-                Log.Warn("Activating stale pending passkey credential {0} of {1} (saved {2:o}): the registrar holds its key as the handle's key set", row.CredentialId, row.PersonHandle, row.CreatedUtc);
+                Log.Warn("Activating stale pending passkey credential {0} of {1} (saved {2:o}): the registrar holds its key as the handle's key set", PasskeyText.Printable(row.CredentialId), PasskeyText.Printable(row.PersonHandle), row.CreatedUtc);
                 _credentials.Activate(row.PersonHandle, row.CredentialId);
             }
             else
             {
-                Log.Warn("Removing stale pending passkey credential {0} of {1} (saved {2:o}, never accepted by the registrar)", row.CredentialId, row.PersonHandle, row.CreatedUtc);
+                Log.Warn("Removing stale pending passkey credential {0} of {1} (saved {2:o}, never accepted by the registrar)", PasskeyText.Printable(row.CredentialId), PasskeyText.Printable(row.PersonHandle), row.CreatedUtc);
                 _credentials.Remove(row.PersonHandle, row.CredentialId);
             }
         }
@@ -564,13 +564,15 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
 
     private static PasskeyRegistrationResult RegistrationFailed(string personHandle, PasskeyVerificationFailure failure, string? detail)
     {
-        Log.Warn("Passkey registration for {0} failed: {1} ({2})", personHandle, failure, detail ?? string.Empty);
+        // The handle and, through the detail, the client's own bytes are caller-chosen: one bounded line each.
+        Log.Warn("Passkey registration for {0} failed: {1} ({2})", PasskeyText.Printable(personHandle), failure, PasskeyText.Printable(detail ?? string.Empty, PasskeyVerification.MaxDetailLength));
         return new PasskeyRegistrationResult { Success = false, Failure = failure, Message = VerificationFailedMessage };
     }
 
     private static PasskeySignInResult SignInFailed(string? credentialId, PasskeyVerificationFailure failure, string? detail)
     {
-        Log.Warn("Passkey assertion for credential {0} failed: {1} ({2})", credentialId ?? "(none)", failure, detail ?? string.Empty);
+        // The credential id comes straight from the response when no stored credential matched it.
+        Log.Warn("Passkey assertion for credential {0} failed: {1} ({2})", PasskeyText.Printable(credentialId), failure, PasskeyText.Printable(detail ?? string.Empty, PasskeyVerification.MaxDetailLength));
         return new PasskeySignInResult { Success = false, Failure = failure, Message = VerificationFailedMessage };
     }
 }
