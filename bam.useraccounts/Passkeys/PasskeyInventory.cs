@@ -50,7 +50,7 @@ public sealed class PasskeyInventory : IPasskeyInventory
         {
             trimmed = trimmed.Substring(0, MaxNameLength).TrimEnd();
         }
-        bool renamed = _credentials.SetName(credential.CredentialId, trimmed);
+        bool renamed = _credentials.SetName(personHandle, credential.CredentialId, trimmed);
         if (renamed)
         {
             Log.Info("Passkey {0} of {1} renamed", credential.CredentialId, personHandle);
@@ -70,7 +70,7 @@ public sealed class PasskeyInventory : IPasskeyInventory
         {
             return PasskeyRemoval.LastCredential;
         }
-        if (!_credentials.Remove(credential.CredentialId))
+        if (!_credentials.Remove(personHandle, credential.CredentialId))
         {
             return PasskeyRemoval.NotFound;
         }
