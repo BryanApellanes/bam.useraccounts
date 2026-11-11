@@ -132,6 +132,21 @@ public class PasskeyTextShould : UnitTestMenuContainer
                 PasskeyVerification longVerification = new PasskeyRegistrationVerifier(fixture.Options).Verify(authenticator.Register(longChallenge, clientData: longClientData), longChallenge);
                 fixture.Ceremony.CompleteRegistration("long-detail", authenticator.Register(longChallenge, clientData: longClientData));
 
+                // The same long parser message through the challenge verifier, which returns it to the host.
+                byte[] longAssertion = System.Text.Encoding.UTF8.GetBytes("{\"" + new string('p', 3000) + "\":x}");
+                string exceptionMessage = string.Empty;
+                try
+                {
+                    PasskeyAssertionResponse.FromJson(longAssertion);
+                }
+                catch (PasskeyFormatException e)
+                {
+                    exceptionMessage = e.Message;
+                }
+                string verifierMessage = new PasskeyChallengeSignatureVerifier(fixture.Ceremony, fixture.Credentials)
+                    .Verify(new ConfirmationChallenge { PersonHandle = "long-detail", ChallengeBytes = longChallenge, ExpiresUtc = DateTime.UtcNow.AddMinutes(1) }, longAssertion, null!)
+                    .Message;
+
                 IReadOnlyList<LogEvent> events = logger.Events;
                 List<string> values = events.SelectMany(e => e.MessageVariableValues ?? Array.Empty<string?>()).Where(v => v is not null).Select(v => v!).ToList();
                 return new LogOutcome(
@@ -143,7 +158,11 @@ public class PasskeyTextShould : UnitTestMenuContainer
                     values.Any(v => v.Contains(Forged + "-CREDENTIAL")),
                     longVerification.Detail!.Length > PasskeyVerification.MaxDetailLength,
                     longVerification.Detail.Substring(longVerification.Detail.LastIndexOf("...(+", StringComparison.Ordinal)),
-                    values.Any(v => v == longVerification.Detail));
+                    values.Any(v => v == longVerification.Detail),
+                    exceptionMessage.Length > PasskeyVerification.MaxDetailLength && !HasLineBreak(exceptionMessage),
+                    exceptionMessage.Substring(Math.Max(0, exceptionMessage.LastIndexOf("...(+", StringComparison.Ordinal))),
+                    verifierMessage.EndsWith(exceptionMessage, StringComparison.Ordinal),
+                    verifierMessage.Length);
             }
             finally
             {
@@ -165,6 +184,9 @@ public class PasskeyTextShould : UnitTestMenuContainer
             because.ItsTrue("the credential id is still logged, inline", outcome.CredentialLogged);
             because.ItsTrue("the long detail was cut by Fail", outcome.LongDetailWasCut);
             because.ItsTrue("the log carries that detail unchanged, with the real dropped count " + outcome.LongDetailNote, outcome.LongDetailLoggedUnchanged);
+            because.ItsTrue("the JSON exception's message is cut once, on one line, note " + outcome.ExceptionNote, outcome.ExceptionMessageCutOnce);
+            because.ItsTrue("the challenge verifier returns that message uncut, with the same note", outcome.VerifierKeepsTheNote);
+            because.ItsTrue("the challenge verifier's message is bounded, length " + outcome.VerifierMessageLength, outcome.VerifierMessageLength < 520);
         })
         .SoBeHappy()
         .UnlessItFailed();
@@ -216,5 +238,5 @@ public class PasskeyTextShould : UnitTestMenuContainer
 
     private sealed record DetailOutcome(PasskeyVerificationFailure OriginFailure, bool OriginHasLineBreak, int OriginDetailLength, bool OriginStillNamed, PasskeyVerificationFailure TypeFailure, bool TypeHasLineBreak, bool TypeStillNamed, bool DirectHasLineBreak, int DirectLength);
 
-    private sealed record LogOutcome(bool Registered, bool SignedIn, string? RegistrationMessage, int Events, bool AnyLineBreak, int LongestValue, bool HandleLogged, bool OriginLogged, bool CredentialLogged, bool LongDetailWasCut, string LongDetailNote, bool LongDetailLoggedUnchanged);
+    private sealed record LogOutcome(bool Registered, bool SignedIn, string? RegistrationMessage, int Events, bool AnyLineBreak, int LongestValue, bool HandleLogged, bool OriginLogged, bool CredentialLogged, bool LongDetailWasCut, string LongDetailNote, bool LongDetailLoggedUnchanged, bool ExceptionMessageCutOnce, string ExceptionNote, bool VerifierKeepsTheNote, int VerifierMessageLength);
 }

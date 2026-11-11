@@ -39,7 +39,9 @@ public sealed class PasskeyChallengeSignatureVerifier : IChallengeSignatureVerif
         }
         catch (PasskeyFormatException e)
         {
-            return Failed(signerPublicKey, PasskeyText.Printable("assertion is not valid JSON: " + e.Message, PasskeyVerification.MaxDetailLength));
+            // FromJson's PasskeyFormatException is built in PasskeyJson.Deserialize, which has already made the
+            // parser's message one bounded line.  Cutting it again here would replace its truncation note with a wrong count.
+            return Failed(signerPublicKey, "assertion is not valid JSON: " + e.Message);
         }
         if (response is null || string.IsNullOrEmpty(response.Id))
         {
