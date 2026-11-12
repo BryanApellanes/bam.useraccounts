@@ -70,7 +70,10 @@ public class PasskeyOptionsShould : UnitTestMenuContainer
                 Throws(o => o.Algorithms = new List<CoseAlgorithm>()),
                 Throws(o => o.Algorithms = new List<CoseAlgorithm> { (CoseAlgorithm)99 }),
                 Throws(o => o.ChallengeLifetime = TimeSpan.Zero),
-                !Throws(o => o.RequireUserVerification = true));
+                !Throws(o => o.RequireUserVerification = true),
+                Throws(o => o.ResidentKey = "Required"),
+                Throws(o => o.ResidentKey = "always"),
+                !Throws(o => o.ResidentKey = "required") && !Throws(o => o.ResidentKey = "discouraged"));
         })
         .TheTest
         .ShouldPass<RejectionOutcome>((because, outcome) =>
@@ -86,6 +89,9 @@ public class PasskeyOptionsShould : UnitTestMenuContainer
             because.ItsTrue("unsupported algorithm is refused", outcome.UnsupportedAlgorithm);
             because.ItsTrue("zero lifetime is refused", outcome.ZeroLifetime);
             because.ItsTrue("requiring user verification is fine", outcome.RequireUvAccepted);
+            because.ItsTrue("a residentKey in the wrong case is refused", outcome.ResidentKeyWrongCase);
+            because.ItsTrue("an unknown residentKey is refused", outcome.ResidentKeyUnknown);
+            because.ItsTrue("the three spec values are accepted", outcome.ResidentKeyAccepted);
         })
         .SoBeHappy()
         .UnlessItFailed();
@@ -109,5 +115,5 @@ public class PasskeyOptionsShould : UnitTestMenuContainer
     private sealed record OriginOutcome(bool Exact, bool UpperHost, bool Subdomain, bool WrongScheme, bool WrongPort, bool OtherHost, bool Null, bool WithPath, bool WithQuery, bool WithUserInfo, bool WithWhitespace, string UserVerification);
 
     private sealed record RejectionOutcome(bool RpIdWithScheme, bool RpIdMixedCase, bool EmptyRpName, bool NoOrigins, bool OriginWithPath,
-        bool ForeignOrigin, bool SuffixOrigin, bool NoAlgorithms, bool UnsupportedAlgorithm, bool ZeroLifetime, bool RequireUvAccepted);
+        bool ForeignOrigin, bool SuffixOrigin, bool NoAlgorithms, bool UnsupportedAlgorithm, bool ZeroLifetime, bool RequireUvAccepted, bool ResidentKeyWrongCase, bool ResidentKeyUnknown, bool ResidentKeyAccepted);
 }

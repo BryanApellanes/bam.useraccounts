@@ -296,10 +296,33 @@ const actions = {
 
 const ceremonies = new Set(["register", "signin", "add"]);
 
+// Actions that change a signed-in account. Only the manage page renders them.
+const manageActions = new Set(["add", "rename", "remove", "profile"]);
+
+function onAccountPage(path) {
+    return path === prefix || path.startsWith(prefix + "/");
+}
+
+function onManagePage(path) {
+    return path === prefix || path === prefix + "/";
+}
+
+// Real shells are rendered only by the account pages, one per page. An action elsewhere, an
+// account-changing action off the manage page, or a page with a second shell (markup injected
+// next to the real one) is refused rather than guessed at.
+function allowed(name) {
+    const path = location.pathname || "";
+    if (!onAccountPage(path) || (manageActions.has(name) && !onManagePage(path))) {
+        return false;
+    }
+    return document.querySelectorAll(shellSelector).length === 1;
+}
+
 async function run(button) {
     const shell = shellOf(button);
-    const action = Object.prototype.hasOwnProperty.call(actions, button.dataset.accountAction) ? actions[button.dataset.accountAction] : null;
-    if (!shell || !action || button.disabled) {
+    const name = button.dataset.accountAction;
+    const action = Object.prototype.hasOwnProperty.call(actions, name) ? actions[name] : null;
+    if (!shell || !action || button.disabled || !allowed(name)) {
         return;
     }
     button.disabled = true;
@@ -318,7 +341,7 @@ async function run(button) {
 async function checkAvailability(input) {
     const shell = shellOf(input);
     const hint = shell ? shell.querySelector("[data-account-handle-hint]") : null;
-    if (!hint || !settingsOf(shell).availability) {
+    if (!hint || !allowed("check") || !settingsOf(shell).availability) {
         return;
     }
     if (hint.dataset.accountHelp === undefined) {

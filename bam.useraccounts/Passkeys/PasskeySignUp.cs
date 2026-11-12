@@ -97,6 +97,8 @@ public sealed class PasskeySignUp : IPasskeySignUp
         bool profileCreated;
         lock (ProfileLock)
         {
+            // Defensive: CompleteProfile needs a session for this handle, and none exists until
+            // this method returns, so a person row here would be one written by other means.
             profileCreated = PersonExists(handle) || CreateProfile(handle, displayName, email);
         }
         SignedUpPerson person = new SignedUpPerson

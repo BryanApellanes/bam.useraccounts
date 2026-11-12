@@ -39,7 +39,11 @@ public static class AccountWebRegistration
     /// <param name="services">The host's service collection.</param>
     /// <param name="registry">The host's bam registry.</param>
     /// <param name="site">Branding, cookie, rate-limit and sign-up settings.</param>
-    /// <param name="passkeys">The relying party: id, name and allowed origins.</param>
+    /// <param name="passkeys">
+    /// The relying party: id, name and allowed origins.  When the host keeps handles private
+    /// (<see cref="SignUpPolicy.AllowHandleAvailabilityCheck"/> off), this instance's
+    /// <see cref="PasskeyOptions.ResidentKey"/> is set to <see cref="DiscoverableResidentKey"/>.
+    /// </param>
     /// <returns>The service collection.</returns>
     public static IServiceCollection AddPasskeyAccounts(this IServiceCollection services, ServiceRegistry registry, AccountSiteOptions site, PasskeyOptions passkeys)
     {
