@@ -1,11 +1,11 @@
-@* A button the browser module binds to.  Mode is one of register, signin, add, rename, remove,
+@* A button the browser module binds to.  Mode is one of register, signin, add, rename, remove, profile,
    signout; the module reads the named form's fields and runs that action. *@
 
 <button type="button" class="btn @CssClass account-button" data-account-action="@Mode" data-account-form="@FormId"
         data-account-return="@ReturnUrl" data-account-credential="@CredentialId">@Label</button>
 
 @code {
-    /// <summary>The action: <c>register</c>, <c>signin</c>, <c>add</c>, <c>rename</c>, <c>remove</c> or <c>signout</c>.</summary>
+    /// <summary>The action: <c>register</c>, <c>signin</c>, <c>add</c>, <c>rename</c>, <c>remove</c>, <c>profile</c> or <c>signout</c>.</summary>
     [Parameter, EditorRequired]
     public string Mode { get; set; } = string.Empty;
 

@@ -56,7 +56,15 @@ The host project must be a web-SDK project (`Microsoft.NET.Sdk.Web`). That is wh
 
 The prefix is fixed. The pages are routable components, so their routes are compiled in.
 
-The pages are static server-rendered and render inside the host's own layout. They don't open a circuit. Links between them opt out of enhanced navigation so the module loads on each page.
+The pages are static server-rendered and render inside the host's own layout. They don't open a circuit.
+
+The browser module listens on the document rather than binding to page elements, so it keeps working when Blazor's enhanced navigation swaps an account page in. A host that uses `blazor.web.js` should load the module once from `App.razor` as well, so it's there whichever page a visitor arrives on:
+
+```html
+<script type="module" src="_content/bam.useraccounts.web/passkeys.js"></script>
+```
+
+The account layout loads the same URL, and a module only runs once per document, so loading it twice is harmless.
 
 ## Branding
 
@@ -75,15 +83,15 @@ Markup carries Bootstrap 5 classes. The library ships only `account.css`, which 
 
 `AccountSiteOptions.SignUp` is the core `SignUpPolicy`: `OpenSignUp`, `InviteCodes`, `RequireEmail`, `HandlePattern`, `ReservedHandlePrefixes`, `AllowHandleAvailabilityCheck`. With sign-up closed and no invite codes the page shows a message and no form.
 
-The availability check is on by default because a handle is a public identifier. Turn it off and the endpoint isn't mapped, and a taken handle fails sign-up without saying why.
+The availability check is on by default because a handle is a public identifier. Turn it off and handles stay private: the endpoint isn't mapped, a taken handle fails sign-up without saying why, and sign-in ignores the handle it's sent and runs the discoverable ceremony. A handle-scoped sign-in lists that handle's passkeys, which would say the handle exists. The cost is that a passkey that isn't discoverable can't be offered by handle on such a host.
 
 A host runs its own step after sign-up by registering an `IPostSignUpStep` on the registry (`registry.AddPostSignUpStep<MyStep>()`). Its `NextUrl` is where the new person lands, when it is a path on the site.
 
 ## Session
 
-A verified sign-up or sign-in issues a cookie under the `Bam.Account` scheme: `HttpOnly`, `Secure`, `SameSite=Lax`, 14 days, sliding. `[Authorize(Policy = AccountWebRegistration.Policy)]` requires it. `AccountPrincipal.Handle(user)` reads the person's handle; the claim types are on `AccountClaims`.
+A verified sign-up or sign-in issues a cookie under the `Bam.Account` scheme: `HttpOnly`, `Secure`, `SameSite=Lax`, 14 days, sliding. `[Authorize(Policy = AccountWebRegistration.Policy)]` requires it. `AccountPrincipal.Handle(user)` reads the person's handle; the claim types are on `AccountClaims`. `User.Identity.Name` is the handle too. The display name is the person's own choice, so it's only on `AccountClaims.DisplayName` and `AccountPrincipal.DisplayName(user)`; don't use it to identify anyone.
 
-The session's passkey is checked against the credential store every `Cookie.RevalidateEvery` (5 minutes). Removing a passkey ends the sessions opened with it at their next check.
+The session's passkey is checked against the credential store every `Cookie.RevalidateEvery` (5 minutes). With `SlidingExpiration` off the cookie is never reissued, so the check runs on every request instead. Removing a passkey ends the sessions opened with it at their next check.
 
 `AddPasskeyAccounts` makes `Bam.Account` the default authentication scheme only when the host hasn't set one.
 
@@ -104,6 +112,7 @@ All under `/account`, JSON in and out, camelCase. The types are in `AccountWire.
 | `GET /passkeys` | | `{ passkeys: [{ id, name, createdUtc, lastUsedUtc, current, registeredKeySet }] }`. Session required |
 | `POST /passkeys/{id}/name` | `{ name }` | 204. Session required |
 | `DELETE /passkeys/{id}` | | `{ signedOut, nextUrl }`. Session required |
+| `POST /profile` | `{ displayName, email? }` | 204. Session required. Saves a profile that wasn't saved at sign-up |
 | `POST /signout` | `{}` | `{ signedOut, nextUrl }` |
 | `GET /handle/{handle}/availability` | | `{ handle, available, reason }` |
 
@@ -142,7 +151,7 @@ rate_limit {
 
 ## Known states and limits
 
-- **Profile not written.** The passkey claims the handle before the profile is written. If that write fails the person is signed in anyway, `profileCreated` is false, and the manage page retries it on each visit until it succeeds.
+- **Profile not written.** The passkey claims the handle before the profile is written. If that write fails the person is signed in anyway and `profileCreated` is false. The manage page then asks for their name and email again and saves them through `POST /profile`, under the same email rule as sign-up. Nothing is written until the person enters their details, so a host that requires email never gets a profile without one.
 - **Removing the first passkey.** A person may remove their first passkey when another remains. It stops working at once. Its key stays registered as the handle's key set in `bam.protocol` until it is revoked there.
 - **Sign out everywhere** isn't built. Removing a passkey ends that passkey's sessions; other sessions run until they expire.
 - **Passkey prompts need a secure context**: https, or `http://localhost` in development.

@@ -61,6 +61,16 @@ public sealed class RenameRequest
     public string? Name { get; set; }
 }
 
+/// <summary>Body of <c>profile</c>: the details for a profile that wasn't saved at sign-up.</summary>
+public sealed class ProfileRequest
+{
+    /// <summary>The name to show; the handle when blank.</summary>
+    public string? DisplayName { get; set; }
+
+    /// <summary>The email address, or null. Required when the host's sign-up policy requires one.</summary>
+    public string? Email { get; set; }
+}
+
 /// <summary>Every refusal: a coarse code a client can branch on and a message a person can read.</summary>
 public sealed class AccountError
 {
@@ -118,6 +128,9 @@ public static class AccountErrorCodes
 
     /// <summary>Too many requests from this address.</summary>
     public const string RateLimited = "RateLimited";
+
+    /// <summary>The profile couldn't be saved; try again later.</summary>
+    public const string ProfileNotSaved = "ProfileNotSaved";
 }
 
 /// <summary>Response of <c>registration/begin</c> and <c>additional/begin</c>.</summary>

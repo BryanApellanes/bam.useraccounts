@@ -1,16 +1,30 @@
 // bam.useraccounts.web passkey module.
 //
 // Runs the WebAuthn ceremonies for the account pages against the JSON endpoints under the
-// account prefix, and binds itself to every element carrying data-account-action. The page
-// shell hands it its settings (endpoint prefix, request header, the host's wording) in a
-// data-account-config attribute. Each exported function can also be called directly.
+// account prefix, and handles every element carrying data-account-action. The page shell hands
+// it its settings (endpoint prefix, request header, the host's wording) in a data-account-config
+// attribute. Each exported function can also be called directly.
+//
+// A module is evaluated once per document, and Blazor's enhanced navigation swaps pages in
+// without reloading it. So nothing here binds to page elements: one set of listeners on the
+// document handles whatever page is showing, and the settings are read from the current page
+// each time they're needed.
 
 export const version = "1";
 
-const shell = document.querySelector("[data-account-config]");
-const config = Object.assign(
-    { prefix: "/account", header: "X-Bam-Account", availability: false, messages: {} },
-    shell ? JSON.parse(shell.dataset.accountConfig) : {});
+const defaults = { prefix: "/account", header: "X-Bam-Account", availability: false, messages: {} };
+
+function settings() {
+    const shell = document.querySelector("[data-account-config]");
+    if (!shell) {
+        return defaults;
+    }
+    try {
+        return Object.assign({}, defaults, JSON.parse(shell.dataset.accountConfig));
+    } catch {
+        return defaults;
+    }
+}
 
 /** An endpoint refusal: a coarse code and the host's message for it. */
 export class AccountError extends Error {
@@ -23,7 +37,7 @@ export class AccountError extends Error {
 }
 
 function message(key, fallback) {
-    return config.messages[key] || fallback || "";
+    return settings().messages[key] || fallback || "";
 }
 
 export function bytesToBase64Url(buffer) {
@@ -90,6 +104,7 @@ function credentialToJson(credential) {
 }
 
 async function call(method, path, body) {
+    const config = settings();
     const headers = { Accept: "application/json" };
     headers[config.header] = "1";
     const init = { method, headers, credentials: "same-origin" };
@@ -173,6 +188,11 @@ export function signOut() {
     return call("POST", "/signout", {});
 }
 
+/** Finishes a profile that wasn't saved at sign-up: fields are { displayName, email }. */
+export function completeProfile(fields) {
+    return call("POST", "/profile", { displayName: fields.displayName || null, email: fields.email || null });
+}
+
 /** Asks whether a handle can be signed up with. Resolves to { handle, available, reason }. */
 export function checkHandle(handle) {
     return call("GET", "/handle/" + encodeURIComponent(handle) + "/availability");
@@ -227,9 +247,13 @@ const actions = {
             location.reload();
         }
     },
+    async profile(button) {
+        await completeProfile(fields(button.dataset.accountForm));
+        location.reload();
+    },
     async signout() {
         const done = await signOut();
-        location.assign(done && done.nextUrl || config.prefix + "/signedout");
+        location.assign(done && done.nextUrl || settings().prefix + "/signedout");
     }
 };
 
@@ -251,58 +275,56 @@ async function run(button) {
     }
 }
 
-function bindAvailability(input) {
+async function checkAvailability(input) {
     const hint = document.querySelector("[data-account-handle-hint]");
-    if (!hint || !config.availability) {
+    if (!hint || !settings().availability) {
         return;
     }
-    const help = hint.textContent;
-    input.addEventListener("change", async () => {
-        const handle = input.value.trim().toLowerCase();
-        if (!handle) {
-            hint.textContent = help;
-            return;
-        }
-        try {
-            const answer = await checkHandle(handle);
-            const key = answer.available ? "handleAvailable" : answer.reason === "Taken" ? "handleTaken" : answer.reason === "Invalid" ? "handleInvalid" : null;
-            hint.textContent = key ? message(key, help) : help;
-        } catch {
-            hint.textContent = help;
-        }
-    });
-}
-
-function bind() {
-    for (const button of document.querySelectorAll("[data-account-action]")) {
-        if (!button.dataset.accountBound) {
-            button.dataset.accountBound = "1";
-            button.addEventListener("click", () => run(button));
-        }
+    if (hint.dataset.accountHelp === undefined) {
+        hint.dataset.accountHelp = hint.textContent;
     }
-    // Enter in a field runs the form's first action instead of submitting the form.
-    for (const form of document.querySelectorAll(".account-form, .account-passkey-form")) {
-        if (!form.dataset.accountBound) {
-            form.dataset.accountBound = "1";
-            form.addEventListener("submit", event => {
-                event.preventDefault();
-                const button = form.querySelector("[data-account-action]");
-                if (button) {
-                    run(button);
-                }
-            });
-        }
+    const help = hint.dataset.accountHelp;
+    const handle = input.value.trim().toLowerCase();
+    if (!handle) {
+        hint.textContent = help;
+        return;
     }
-    for (const input of document.querySelectorAll("[data-account-handle]")) {
-        if (!input.dataset.accountBound) {
-            input.dataset.accountBound = "1";
-            bindAvailability(input);
-        }
+    try {
+        const answer = await checkHandle(handle);
+        const key = answer.available ? "handleAvailable" : answer.reason === "Taken" ? "handleTaken" : answer.reason === "Invalid" ? "handleInvalid" : null;
+        hint.textContent = key ? message(key, help) : help;
+    } catch {
+        hint.textContent = help;
     }
 }
 
-if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", bind);
-} else {
-    bind();
+function targetOf(event, selector) {
+    return event.target instanceof Element ? event.target.closest(selector) : null;
 }
+
+document.addEventListener("click", event => {
+    const button = targetOf(event, "[data-account-action]");
+    if (button) {
+        event.preventDefault();
+        run(button);
+    }
+});
+
+// Enter in a field runs the form's first action instead of submitting the form.
+document.addEventListener("submit", event => {
+    const form = targetOf(event, ".account-form, .account-passkey-form");
+    if (form) {
+        event.preventDefault();
+        const button = form.querySelector("[data-account-action]");
+        if (button) {
+            run(button);
+        }
+    }
+});
+
+document.addEventListener("change", event => {
+    const input = targetOf(event, "[data-account-handle]");
+    if (input) {
+        checkAvailability(input);
+    }
+});

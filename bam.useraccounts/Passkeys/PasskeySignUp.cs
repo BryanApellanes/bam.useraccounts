@@ -9,7 +9,7 @@ namespace Bam.UserAccounts.Passkeys;
 /// is deliberate: the ceremony runs first because it is what enforces handle uniqueness
 /// (<c>ProfileManager.RegisterPersonProfile</c> does not), then the profile is written, then the
 /// host's steps run.  A profile fault after the passkey has claimed the handle is logged and
-/// reported, never thrown: the person can sign in and <see cref="EnsureProfile"/> finishes the job.
+/// reported, never thrown: the person can sign in and <see cref="CompleteProfile"/> finishes the job.
 /// Every refusal is logged at warning level with its <see cref="SignUpRefusal"/> and the handle;
 /// invite codes and credential material are never logged.
 /// </summary>
@@ -84,7 +84,7 @@ public sealed class PasskeySignUp : IPasskeySignUp
         PasskeyRegistrationResult registration = _ceremony.CompleteRegistration(handle, response);
         if (!registration.Success)
         {
-            Log.Warn("Passkey sign-up for {0} refused at completion: {1} ({2})", handle, SignUpRefusal.CeremonyFailed, registration.Failure);
+            Log.Warn("Passkey sign-up for {0} refused at completion: {1} ({2})", PasskeyText.Printable(handle, PrintableHandleLength), SignUpRefusal.CeremonyFailed, registration.Failure);
             return new PasskeySignUpResult { Success = false, Refusal = SignUpRefusal.CeremonyFailed, Message = SignUpFailedMessage };
         }
 
@@ -100,7 +100,7 @@ public sealed class PasskeySignUp : IPasskeySignUp
             ProfileCreated = profileCreated
         };
         string? nextUrl = RunSteps(person);
-        Log.Info("Passkey sign-up completed for {0} (key {1}, profile created: {2})", handle, registration.KeyFingerprint ?? string.Empty, profileCreated);
+        Log.Info("Passkey sign-up completed for {0} (key {1}, profile created: {2})", PasskeyText.Printable(handle, PrintableHandleLength), registration.KeyFingerprint ?? string.Empty, profileCreated);
         return new PasskeySignUpResult
         {
             Success = true,
@@ -132,21 +132,32 @@ public sealed class PasskeySignUp : IPasskeySignUp
     }
 
     /// <inheritdoc />
-    public bool EnsureProfile(string personHandle, string? displayName, string? email)
+    public bool HasProfile(string personHandle)
+    {
+        string handle = SignUpPolicy.NormalizeHandle(personHandle);
+        return handle.Length > 0 && PersonExists(handle);
+    }
+
+    /// <inheritdoc />
+    public ProfileCompletion CompleteProfile(string personHandle, string? displayName, string? email)
     {
         string handle = SignUpPolicy.NormalizeHandle(personHandle);
         if (handle.Length == 0 || !_credentials.FindByHandle(handle).Any(credential => !credential.Pending))
         {
             Log.Warn("Profile completion for {0} refused: the handle has no passkey", PasskeyText.Printable(handle, PrintableHandleLength));
-            return false;
+            return ProfileCompletion.NoPasskey;
         }
         if (PersonExists(handle))
         {
-            return true;
+            return ProfileCompletion.AlreadyExists;
+        }
+        string? address = string.IsNullOrWhiteSpace(email) ? null : email.Trim();
+        if ((_policy.RequireEmail || address is not null) && !SignUpPolicy.IsPlausibleEmail(address))
+        {
+            return ProfileCompletion.InvalidEmail;
         }
         string name = string.IsNullOrWhiteSpace(displayName) ? handle : Truncate(displayName.Trim());
-        string? address = SignUpPolicy.IsPlausibleEmail(email?.Trim()) ? email!.Trim() : null;
-        return CreateProfile(handle, name, address);
+        return CreateProfile(handle, name, address) ? ProfileCompletion.Created : ProfileCompletion.Failed;
     }
 
     private SignUpRefusal Check(PasskeySignUpRequest? request, string handle)
@@ -207,7 +218,7 @@ public sealed class PasskeySignUp : IPasskeySignUp
             RegistrationResult registered = _accounts.RegisterPerson(data);
             if (!registered.Success)
             {
-                Log.Warn("Passkey sign-up for {0}: the passkey claimed the handle but the profile was refused ({1})", handle, registered.Message ?? string.Empty);
+                Log.Warn("Passkey sign-up for {0}: the passkey claimed the handle but the profile was refused ({1})", PasskeyText.Printable(handle, PrintableHandleLength), PasskeyText.Printable(registered.Message));
                 return false;
             }
             string? profileHandle = registered.Profile?.ProfileHandle;
@@ -219,7 +230,7 @@ public sealed class PasskeySignUp : IPasskeySignUp
         }
         catch (Exception e)
         {
-            Log.Warn("Passkey sign-up for {0}: the passkey claimed the handle but the profile write faulted ({1}: {2})", handle, e.GetType().Name, e.Message);
+            Log.Warn("Passkey sign-up for {0}: the passkey claimed the handle but the profile write faulted ({1}: {2})", PasskeyText.Printable(handle, PrintableHandleLength), e.GetType().Name, PasskeyText.Printable(e.Message));
             return false;
         }
     }
@@ -239,7 +250,7 @@ public sealed class PasskeySignUp : IPasskeySignUp
             }
             catch (Exception e)
             {
-                Log.Warn("Post-sign-up step for {0} faulted and was skipped ({1}: {2})", person.PersonHandle, e.GetType().Name, e.Message);
+                Log.Warn("Post-sign-up step for {0} faulted and was skipped ({1}: {2})", PasskeyText.Printable(person.PersonHandle, PrintableHandleLength), e.GetType().Name, PasskeyText.Printable(e.Message));
             }
         }
         return nextUrl;

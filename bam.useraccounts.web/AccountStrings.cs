@@ -126,7 +126,13 @@ public sealed class AccountStrings
     public string LastUsedPrefix { get; set; } = "Last used";
 
     /// <summary>Shown on the manage page when the person's profile was not written at sign-up.</summary>
-    public string ProfileIncompleteMessage { get; set; } = "Your profile wasn't saved when you signed up. Reload this page to finish it.";
+    public string ProfileIncompleteMessage { get; set; } = "Your profile wasn't saved when you signed up. Check your details and save them.";
+
+    /// <summary>The button that saves a profile that wasn't saved at sign-up.</summary>
+    public string SaveProfile { get; set; } = "Save profile";
+
+    /// <summary>Shown when saving the profile failed.</summary>
+    public string ProfileNotSavedMessage { get; set; } = "We couldn't save your profile. Try again later.";
 
     /// <summary>Body of the signed-out page.</summary>
     public string SignedOutMessage { get; set; } = "Come back any time.";

@@ -112,7 +112,9 @@ public class AccountOptionsShould : UnitTestMenuContainer
                 because.ItsTrue("carrying the handle, credential id and fingerprint", AccountPrincipal.Handle(outcome.FromSignIn) == "alice" && AccountPrincipal.CredentialId(outcome.FromSignIn) == "cred-a1" && outcome.FromSignIn?.FindFirst(AccountClaims.KeyFingerprint)?.Value == "fp-a1");
                 because.ItsTrue("marked as a passkey authentication with its time", outcome.FromSignIn?.FindFirst(AccountClaims.AuthenticationMethod)?.Value == "passkey" && long.TryParse(outcome.FromSignIn.FindFirst(AccountClaims.AuthenticationTime)?.Value, out long _));
                 because.ItsTrue("the handle stands in for a display name that is not known", AccountPrincipal.DisplayName(outcome.FromSignIn) == "alice");
-                because.ItsTrue("a completed sign-up carries the person's display name", AccountPrincipal.Handle(outcome.FromSignUp) == "bob" && AccountPrincipal.DisplayName(outcome.FromSignUp) == "Bob Example" && outcome.FromSignUp?.Identity?.Name == "Bob Example");
+                because.ItsTrue("a completed sign-up carries the person's display name", AccountPrincipal.Handle(outcome.FromSignUp) == "bob" && AccountPrincipal.DisplayName(outcome.FromSignUp) == "Bob Example");
+                because.ItsTrue($"the identity's name is the handle, never the name the person typed ({outcome.FromSignUp?.Identity?.Name}, {outcome.FromSignIn?.Identity?.Name})",
+                    outcome.FromSignUp?.Identity?.Name == "bob" && outcome.FromSignIn?.Identity?.Name == "alice");
                 because.ItsTrue("a failed sign-in yields no principal", outcome.FromFailure is null);
                 because.ItsTrue("a failed sign-up yields no principal", outcome.FromFailedSignUp is null);
                 because.ItsTrue("a result without a credential id yields no principal", outcome.WithoutCredential is null);

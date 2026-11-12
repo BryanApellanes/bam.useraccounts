@@ -249,11 +249,15 @@ public class PasskeySignUpShould : UnitTestMenuContainer
             PasskeySignUpResult refused = fixture.Run(Request("john-doe", "John Doe"), new SyntheticAuthenticator());
             fixture.RegisterPersonRefuses = false;
 
-            bool stranger = fixture.SignUp.EnsureProfile("nobody-here", "Nobody", null);
-            bool finished = fixture.SignUp.EnsureProfile("Jane-Doe", "  Jane Doe ", "not-an-email");
+            ProfileCompletion stranger = fixture.SignUp.CompleteProfile("nobody-here", "Nobody", null);
+            bool hadProfile = fixture.SignUp.HasProfile("jane-doe");
+            int attemptsBeforeBadEmail = fixture.RegisterAttempts;
+            ProfileCompletion badEmail = fixture.SignUp.CompleteProfile("Jane-Doe", "Jane Doe", "not-an-email");
+            int attemptsAfterBadEmail = fixture.RegisterAttempts - attemptsBeforeBadEmail;
+            ProfileCompletion finished = fixture.SignUp.CompleteProfile("Jane-Doe", "  Jane Doe ", null);
             int attemptsAfterFinish = fixture.RegisterAttempts;
-            bool finishedAgain = fixture.SignUp.EnsureProfile("jane-doe", "Jane Doe", null);
-            return new ProfileFaultOutcome(fixture, faulted, signIn, refused, stranger, finished, finishedAgain, attemptsAfterFinish);
+            ProfileCompletion finishedAgain = fixture.SignUp.CompleteProfile("jane-doe", "Jane Doe", null);
+            return new ProfileFaultOutcome(fixture, faulted, signIn, refused, stranger, hadProfile, badEmail, attemptsAfterBadEmail, finished, fixture.SignUp.HasProfile("jane-doe"), finishedAgain, attemptsAfterFinish);
         })
         .TheTest
         .ShouldPass<ProfileFaultOutcome>((because, outcome) =>
@@ -262,10 +266,38 @@ public class PasskeySignUpShould : UnitTestMenuContainer
             because.ItsTrue("and reports the missing profile", !outcome.Faulted.ProfileCreated && outcome.Faulted.Refusal == SignUpRefusal.ProfileFailed);
             because.ItsTrue("the person can sign in", outcome.SignIn.Success && outcome.SignIn.PersonHandle == "jane-doe");
             because.ItsTrue("a profile the account service refuses is reported the same way", outcome.Refused.Success && !outcome.Refused.ProfileCreated);
-            because.ItsTrue("EnsureProfile refuses a handle without a passkey", !outcome.Stranger);
-            because.ItsTrue("EnsureProfile writes the missing profile", outcome.Finished && outcome.Fixture.RegisteredPersons.Count == 1 && outcome.Fixture.RegisteredPersons[0].Handle == "jane-doe");
-            because.ItsTrue("dropping an implausible email", outcome.Fixture.RegisteredPersons[0].Email is null);
-            because.ItsTrue("and is a no-op once the person exists", outcome.FinishedAgain && outcome.Fixture.RegisterAttempts == outcome.AttemptsAfterFinish);
+            because.ItsTrue($"CompleteProfile refuses a handle without a passkey ({outcome.Stranger})", outcome.Stranger == ProfileCompletion.NoPasskey);
+            because.ItsTrue("HasProfile reports the missing profile", !outcome.HadProfile);
+            because.ItsTrue($"an implausible email is refused, not dropped, and nothing is written ({outcome.BadEmail})", outcome.BadEmail == ProfileCompletion.InvalidEmail && outcome.AttemptsAfterBadEmail == 0);
+            because.ItsTrue($"CompleteProfile writes the missing profile ({outcome.Finished})", outcome.Finished == ProfileCompletion.Created && outcome.Fixture.RegisteredPersons.Count == 1 && outcome.Fixture.RegisteredPersons[0].Handle == "jane-doe");
+            because.ItsTrue("with the name the person gave", outcome.Fixture.RegisteredPersons[0].FirstName == "Jane" && outcome.Fixture.RegisteredPersons[0].LastName == "Doe");
+            because.ItsTrue("and HasProfile then says so", outcome.HasProfileAfter);
+            because.ItsTrue($"and is a no-op once the person exists ({outcome.FinishedAgain})", outcome.FinishedAgain == ProfileCompletion.AlreadyExists && outcome.Fixture.RegisterAttempts == outcome.AttemptsAfterFinish);
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    [UnitTest]
+    public void RequireTheEmailWhenCompletingAProfile()
+    {
+        After.Setup(reg => reg.Set(new SignUpFixture(new SignUpPolicy { RequireEmail = true })))
+        .When<SignUpFixture>("finishes a lost profile on a host that requires email", (fixture, reg) =>
+        {
+            fixture.RegisterPersonThrows = new InvalidOperationException("store is down");
+            PasskeySignUpResult faulted = fixture.Run(Request(email: "jane@example.com"), new SyntheticAuthenticator());
+            fixture.RegisterPersonThrows = null;
+            ProfileCompletion withoutEmail = fixture.SignUp.CompleteProfile("jane-doe", "Jane Doe", "  ");
+            int personsAfterRefusal = fixture.RegisteredPersons.Count;
+            ProfileCompletion withEmail = fixture.SignUp.CompleteProfile("jane-doe", "Jane Doe", " jane@example.com ");
+            return new RequiredEmailOutcome(fixture, faulted, withoutEmail, personsAfterRefusal, withEmail);
+        })
+        .TheTest
+        .ShouldPass<RequiredEmailOutcome>((because, outcome) =>
+        {
+            because.ItsTrue("the sign-up kept the passkey without a profile", outcome.Faulted.Success && !outcome.Faulted.ProfileCreated);
+            because.ItsTrue($"a profile without an email is refused ({outcome.WithoutEmail})", outcome.WithoutEmail == ProfileCompletion.InvalidEmail && outcome.PersonsAfterRefusal == 0);
+            because.ItsTrue($"one with an email is written, trimmed ({outcome.WithEmail})", outcome.WithEmail == ProfileCompletion.Created && outcome.Fixture.RegisteredPersons.Count == 1 && outcome.Fixture.RegisteredPersons[0].Email == "jane@example.com");
         })
         .SoBeHappy()
         .UnlessItFailed();
@@ -418,8 +450,10 @@ public class PasskeySignUpShould : UnitTestMenuContainer
 
     private sealed record RefusalOutcome(SignUpFixture Fixture, PasskeySignUpResult WrongOrigin, PasskeySignUpResult NoResponse, int StoredCredentials);
 
-    private sealed record ProfileFaultOutcome(SignUpFixture Fixture, PasskeySignUpResult Faulted, PasskeySignInResult SignIn, PasskeySignUpResult Refused, bool Stranger,
-        bool Finished, bool FinishedAgain, int AttemptsAfterFinish);
+    private sealed record ProfileFaultOutcome(SignUpFixture Fixture, PasskeySignUpResult Faulted, PasskeySignInResult SignIn, PasskeySignUpResult Refused, ProfileCompletion Stranger,
+        bool HadProfile, ProfileCompletion BadEmail, int AttemptsAfterBadEmail, ProfileCompletion Finished, bool HasProfileAfter, ProfileCompletion FinishedAgain, int AttemptsAfterFinish);
+
+    private sealed record RequiredEmailOutcome(SignUpFixture Fixture, PasskeySignUpResult Faulted, ProfileCompletion WithoutEmail, int PersonsAfterRefusal, ProfileCompletion WithEmail);
 
     private sealed record StepsOutcome(SignUpFixture Fixture, PasskeySignUpResult Result, List<SignedUpPerson> Seen);
 

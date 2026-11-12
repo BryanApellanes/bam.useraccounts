@@ -17,6 +17,7 @@ public sealed class PasskeyInventory : IPasskeyInventory
     /// <summary>The longest passkey name kept.</summary>
     public const int MaxNameLength = 64;
 
+    private static readonly object RemovalLock = new object();
     private readonly IPasskeyCredentialRepository _credentials;
 
     /// <summary>Initializes the inventory over passkey custody.</summary>
@@ -66,13 +67,19 @@ public sealed class PasskeyInventory : IPasskeyInventory
         {
             return PasskeyRemoval.NotFound;
         }
-        if (List(personHandle).Count <= 1)
+        // The count and the removal are one step: two removals racing for a person's last two
+        // passkeys must leave one.  Removals are rare, so one process-wide lock is enough; the
+        // repositories themselves are process-local (cross-process custody is #4).
+        lock (RemovalLock)
         {
-            return PasskeyRemoval.LastCredential;
-        }
-        if (!_credentials.Remove(personHandle, credential.CredentialId))
-        {
-            return PasskeyRemoval.NotFound;
+            if (List(personHandle).Count <= 1)
+            {
+                return PasskeyRemoval.LastCredential;
+            }
+            if (!_credentials.Remove(personHandle, credential.CredentialId))
+            {
+                return PasskeyRemoval.NotFound;
+            }
         }
         if (credential.IsRegisteredKeySet)
         {

@@ -77,3 +77,22 @@ public sealed class HandleAvailability
     /// <summary>Why.</summary>
     public HandleAvailabilityReason Reason { get; set; }
 }
+
+/// <summary>The outcome of <see cref="IPasskeySignUp.CompleteProfile"/>.</summary>
+public enum ProfileCompletion
+{
+    /// <summary>The profile was written.</summary>
+    Created,
+
+    /// <summary>A profile already existed; nothing was written.</summary>
+    AlreadyExists,
+
+    /// <summary>The handle has no active passkey, so there is no person to complete.</summary>
+    NoPasskey,
+
+    /// <summary>The email is required by the policy and missing, or given and implausible.</summary>
+    InvalidEmail,
+
+    /// <summary>The account service refused or failed the write.</summary>
+    Failed
+}

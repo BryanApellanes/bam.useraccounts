@@ -1,6 +1,7 @@
 using Bam.DependencyInjection;
 using Bam.Test;
 using Bam.UserAccounts.Passkeys;
+using Bam.UserAccounts.Tests.TestClasses;
 
 namespace Bam.UserAccounts.Tests.Unit.Passkeys;
 
@@ -117,10 +118,39 @@ public class PasskeyInventoryShould : UnitTestMenuContainer
         .UnlessItFailed();
     }
 
+    [UnitTest]
+    public void KeepOnePasskeyWhenTwoRemovalsRace()
+    {
+        After.Setup(reg => reg.Set<IPasskeyCredentialRepository>(SeededCustody()))
+        .When<IPasskeyCredentialRepository>("removes alice's two passkeys at once", (custody, reg) =>
+        {
+            using Barrier rendezvous = new Barrier(2);
+            FaultingPasskeyCredentialRepository racing = new FaultingPasskeyCredentialRepository(custody) { FindByHandleRendezvous = rendezvous };
+            PasskeyInventory inventory = new PasskeyInventory(racing);
+            Task<PasskeyRemoval> phone = Task.Run(() => inventory.Remove("alice", "cred-a1"));
+            Task<PasskeyRemoval> laptop = Task.Run(() => inventory.Remove("alice", "cred-a2"));
+            Task.WaitAll(phone, laptop);
+            racing.FindByHandleRendezvous = null;
+            return new RaceOutcome(phone.Result, laptop.Result, inventory.List("alice").Count);
+        })
+        .TheTest
+        .ShouldPass<RaceOutcome>((because, outcome) =>
+        {
+            int removed = (outcome.Phone == PasskeyRemoval.Removed ? 1 : 0) + (outcome.Laptop == PasskeyRemoval.Removed ? 1 : 0);
+            int refused = (outcome.Phone == PasskeyRemoval.LastCredential ? 1 : 0) + (outcome.Laptop == PasskeyRemoval.LastCredential ? 1 : 0);
+            because.ItsTrue($"one removal wins and the other is refused as the last passkey ({outcome.Phone}, {outcome.Laptop})", removed == 1 && refused == 1);
+            because.ItsTrue($"so alice keeps a passkey ({outcome.Remaining})", outcome.Remaining == 1);
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
     private sealed record ListOutcome(IReadOnlyList<PasskeyCredentialData> Alices, IReadOnlyList<PasskeyCredentialData> Bobs, IReadOnlyList<PasskeyCredentialData> Nobodys, IReadOnlyList<PasskeyCredentialData> Blank);
 
     private sealed record RenameOutcome(bool Own, string? OwnName, bool Others, string? OthersName, bool Unknown, bool BlankHandle, bool LongName, int LongLength, bool Cleared, string? ClearedName);
 
     private sealed record RemoveOutcome(PasskeyRemoval Others, PasskeyRemoval Unknown, PasskeyRemoval BobsLast, PasskeyRemoval KeySet, PasskeyRemoval Again, PasskeyRemoval AlicesLast,
         List<string> AlicesRemaining, int BobsRemaining);
+
+    private sealed record RaceOutcome(PasskeyRemoval Phone, PasskeyRemoval Laptop, int Remaining);
 }

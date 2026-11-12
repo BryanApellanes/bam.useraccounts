@@ -114,7 +114,7 @@ public static class AccountPrincipal
         {
             claims.Add(new Claim(AccountClaims.KeyFingerprint, fingerprint));
         }
-        ClaimsIdentity identity = new ClaimsIdentity(claims, AccountCookieOptions.Scheme, AccountClaims.DisplayName, ClaimTypes.Role);
+        ClaimsIdentity identity = new ClaimsIdentity(claims, AccountCookieOptions.Scheme, AccountClaims.Handle, ClaimTypes.Role);
         return new ClaimsPrincipal(identity);
     }
 }

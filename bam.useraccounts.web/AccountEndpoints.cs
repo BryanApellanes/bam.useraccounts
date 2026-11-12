@@ -51,6 +51,7 @@ public static class AccountEndpoints
         group.MapGet("/passkeys", ListPasskeys).RequireAuthorization(AccountWebRegistration.Policy);
         group.MapPost("/passkeys/{credentialId}/name", RenameAsync).RequireAuthorization(AccountWebRegistration.Policy);
         group.MapDelete("/passkeys/{credentialId}", RemoveAsync).RequireAuthorization(AccountWebRegistration.Policy);
+        group.MapPost("/profile", CompleteProfileAsync).RequireAuthorization(AccountWebRegistration.Policy);
         return group;
     }
 
@@ -70,6 +71,7 @@ public static class AccountEndpoints
         return request.Path.StartsWithSegments(AccountRoutes.Prefix + "/passkey")
             || request.Path.StartsWithSegments(AccountRoutes.Prefix + "/passkeys")
             || request.Path.StartsWithSegments(AccountRoutes.Prefix + "/signout")
+            || request.Path.StartsWithSegments(AccountRoutes.Prefix + "/profile")
             || request.Path.StartsWithSegments(AccountRoutes.Prefix + "/handle");
     }
 
@@ -147,7 +149,9 @@ public static class AccountEndpoints
         {
             return BadRequest(site);
         }
-        string handle = SignUpPolicy.NormalizeHandle(body.Handle);
+        // A handle-scoped ceremony lists the handle's passkeys, which says the handle exists. A
+        // host that keeps handles private gets a discoverable ceremony whatever was sent.
+        string handle = site.SignUp.AllowHandleAvailabilityCheck ? SignUpPolicy.NormalizeHandle(body.Handle) : string.Empty;
         PasskeyRequestOptions options = ceremony.BeginAssertion(handle.Length == 0 ? null : handle);
         return Json(new RequestOptionsResponse { Options = options, CeremonyId = options.CeremonyId ?? string.Empty });
     }
@@ -241,6 +245,27 @@ public static class AccountEndpoints
             return Refusal(StatusCodes.Status404NotFound, AccountErrorCodes.NotFound, site.Strings.ActionFailedMessage);
         }
         return Results.NoContent();
+    }
+
+    private static async Task<IResult> CompleteProfileAsync(HttpContext context, IPasskeySignUp signUp, AccountSiteOptions site)
+    {
+        ProfileRequest? body = await ReadAsync<ProfileRequest>(context.Request);
+        if (body is null)
+        {
+            return BadRequest(site);
+        }
+        string handle = AccountPrincipal.Handle(context.User)!;
+        ProfileCompletion completion = signUp.CompleteProfile(handle, body.DisplayName, body.Email);
+        switch (completion)
+        {
+            case ProfileCompletion.Created:
+            case ProfileCompletion.AlreadyExists:
+                return Results.NoContent();
+            case ProfileCompletion.InvalidEmail:
+                return Refusal(StatusCodes.Status400BadRequest, AccountErrorCodes.EmailRequired, site.Strings.EmailRequiredMessage);
+            default:
+                return Refusal(StatusCodes.Status409Conflict, AccountErrorCodes.ProfileNotSaved, site.Strings.ProfileNotSavedMessage);
+        }
     }
 
     private static async Task<IResult> RemoveAsync(string credentialId, HttpContext context, IPasskeyInventory inventory, AccountSession session, AccountSiteOptions site)

@@ -14,7 +14,7 @@
     }
     else
     {
-        <form id="account-signup" class="account-form" action="@AccountRoutes.SignUp" novalidate>
+        <form id="account-signup" class="account-form" method="post" action="@AccountRoutes.SignUp" novalidate>
             <div class="mb-3">
                 <label class="form-label" for="account-handle">@Site.Strings.HandleLabel</label>
                 <input class="form-control" id="account-handle" name="handle" type="text" autocomplete="username" autocapitalize="none"

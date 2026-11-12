@@ -30,14 +30,21 @@ public interface IPasskeySignUp
     /// <param name="handle">The handle as typed.</param>
     HandleAvailability CheckHandle(string? handle);
 
+    /// <summary>Whether a person profile exists for the handle.</summary>
+    /// <param name="personHandle">The person's handle.</param>
+    bool HasProfile(string personHandle);
+
     /// <summary>
     /// Writes the person profile for a handle whose passkey exists but whose profile does not
-    /// (a sign-up that ended with <see cref="PasskeySignUpResult.ProfileCreated"/> false).  The
-    /// caller must have authenticated the person as <paramref name="personHandle"/>.
+    /// (a sign-up that ended with <see cref="PasskeySignUpResult.ProfileCreated"/> false), from
+    /// details the person enters again.  The email rule is sign-up's: required when the policy
+    /// says so, and refused when given but implausible.  Nothing is written for the person
+    /// without their details.  The caller must have authenticated the person as
+    /// <paramref name="personHandle"/>.
     /// </summary>
     /// <param name="personHandle">The authenticated person's handle.</param>
     /// <param name="displayName">The name to show for the person; the handle when blank.</param>
     /// <param name="email">The person's email address, or null.</param>
-    /// <returns>Whether a profile exists for the handle afterwards.</returns>
-    bool EnsureProfile(string personHandle, string? displayName, string? email);
+    /// <returns>What happened.</returns>
+    ProfileCompletion CompleteProfile(string personHandle, string? displayName, string? email);
 }

@@ -46,7 +46,20 @@ public sealed class FaultingPasskeyCredentialRepository : IPasskeyCredentialRepo
         return string.Equals(credentialId, StaleReadOf, StringComparison.Ordinal) ? null : _inner.FindByCredentialId(credentialId);
     }
 
-    public IReadOnlyList<PasskeyCredentialData> FindByHandle(string personHandle) => _inner.FindByHandle(personHandle);
+    /// <summary>
+    /// When set, each <see cref="FindByHandle"/> waits (up to <see cref="RendezvousTimeout"/>) for
+    /// the barrier's other participants, so two callers provably read custody at the same time
+    /// unless something serializes them.
+    /// </summary>
+    public Barrier? FindByHandleRendezvous { get; set; }
+
+    public TimeSpan RendezvousTimeout { get; set; } = TimeSpan.FromMilliseconds(500);
+
+    public IReadOnlyList<PasskeyCredentialData> FindByHandle(string personHandle)
+    {
+        FindByHandleRendezvous?.SignalAndWait(RendezvousTimeout);
+        return _inner.FindByHandle(personHandle);
+    }
 
     public IReadOnlyList<PasskeyCredentialData> FindByUserHandle(string userHandle) => _inner.FindByUserHandle(userHandle);
 

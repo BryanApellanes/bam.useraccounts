@@ -8,6 +8,7 @@ using Bam.UserAccounts.Passkeys;
 using Bam.UserAccounts.Tests.TestClasses;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -24,6 +25,7 @@ public sealed class AccountHost : IDisposable
 {
     private readonly WebApplication _app;
     private readonly HttpClient _client;
+    private volatile CountingReadStream? _lastBody;
 
     public AccountHost(Action<AccountSiteOptions>? configure = null)
     {
@@ -41,6 +43,15 @@ public sealed class AccountHost : IDisposable
         builder.Services.AddRazorComponents();
         builder.Services.AddPasskeyAccounts(Registry, Site, PasskeyFixture.DefaultOptions());
         _app = builder.Build();
+        // Count what the endpoints read of each body. The count is taken before the endpoint runs,
+        // so it is complete by the time the client has the response.
+        _app.Use(async (HttpContext context, RequestDelegate next) =>
+        {
+            CountingReadStream counting = new CountingReadStream(context.Request.Body);
+            context.Request.Body = counting;
+            _lastBody = counting;
+            await next(context);
+        });
         _app.UseStaticFiles();
         _app.UsePasskeyAccounts();
         _app.UseAntiforgery();
@@ -78,15 +89,32 @@ public sealed class AccountHost : IDisposable
         return Send(HttpMethod.Post, path, PasskeyJson.Serialize(body), cookie, withHeader, origin);
     }
 
+    /// <summary>Posts a body as given, with the request header: for the endpoints' body rules.</summary>
+    public AccountReply PostRaw(string path, string content, string mediaType, bool chunked = false)
+    {
+        using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, path);
+        request.Content = new StringContent(content, Encoding.UTF8, mediaType);
+        request.Headers.Add(AccountRoutes.RequestHeader, "1");
+        if (chunked)
+        {
+            // Chunked transfer sends no Content-Length, so only the streamed cap can stop it.
+            request.Headers.TransferEncodingChunked = true;
+        }
+        return Read(request);
+    }
+
+    /// <summary>The bytes the endpoints read from the most recent request's body.</summary>
+    public long LastBodyBytesRead => _lastBody?.BytesRead ?? 0;
+
     public AccountReply Delete(string path, string? cookie = null)
     {
         return Send(HttpMethod.Delete, path, null, cookie, true, null);
     }
 
     /// <summary>Signs a new person up through the endpoints and returns the complete call's reply.</summary>
-    public AccountReply SignUp(string handle, string displayName, SyntheticAuthenticator authenticator, string? origin = null)
+    public AccountReply SignUp(string handle, string displayName, SyntheticAuthenticator authenticator, string? origin = null, string? email = null)
     {
-        AccountReply begun = Post("/account/passkey/registration/begin", new PasskeySignUpRequest { Handle = handle, DisplayName = displayName });
+        AccountReply begun = Post("/account/passkey/registration/begin", new PasskeySignUpRequest { Handle = handle, DisplayName = displayName, Email = email });
         if (begun.Status != HttpStatusCode.OK)
         {
             return begun;
@@ -96,6 +124,7 @@ public sealed class AccountHost : IDisposable
         {
             Handle = handle,
             DisplayName = displayName,
+            Email = email,
             Credential = authenticator.Register(challenge, origin)
         });
     }
@@ -145,6 +174,11 @@ public sealed class AccountHost : IDisposable
         {
             request.Headers.Add("Cookie", cookie);
         }
+        return Read(request);
+    }
+
+    private AccountReply Read(HttpRequestMessage request)
+    {
         using HttpResponseMessage response = _client.SendAsync(request).GetAwaiter().GetResult();
         string body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
         string? setCookie = response.Headers.TryGetValues("Set-Cookie", out IEnumerable<string>? values) ? string.Join("\n", values) : null;

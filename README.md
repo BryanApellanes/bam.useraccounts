@@ -223,7 +223,7 @@ PasskeySignUpBeginResult begun = signUp.Begin(request);            // options fo
 PasskeySignUpResult done = signUp.Complete(request, response);     // the same request again, plus the browser's response
 ```
 
-`Complete` takes the request again because nothing from `Begin` is kept on the server except the challenge. The profile is written after the passkey claims the handle; if that write fails, `ProfileCreated` is false, the person can still sign in, and `EnsureProfile` finishes it later.
+`Complete` takes the request again because nothing from `Begin` is kept on the server except the challenge. The profile is written after the passkey claims the handle; if that write fails, `ProfileCreated` is false, the person can still sign in, and `CompleteProfile` saves it later from the details they enter again (`HasProfile` says whether it's needed).
 
 `bam.useraccounts.web` is the Blazor shell over these: branded pages, JSON endpoints, a session cookie and the browser module. See [bam.useraccounts.web/README.md](bam.useraccounts.web/README.md).
 
