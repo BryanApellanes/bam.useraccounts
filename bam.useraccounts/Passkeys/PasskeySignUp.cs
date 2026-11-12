@@ -21,6 +21,10 @@ public sealed class PasskeySignUp : IPasskeySignUp
     // A handle is at most 64 characters once accepted; a refused one is logged cut to this length.
     private const int PrintableHandleLength = 40;
 
+    // The profile store doesn't enforce one person per handle, so the existence check and the
+    // write happen under one lock. It covers one process; custody across processes is #4.
+    private static readonly object ProfileLock = new object();
+
     private readonly IPasskeyCeremony _ceremony;
     private readonly IUserAccountService _accounts;
     private readonly IPasskeyCredentialRepository _credentials;
@@ -90,7 +94,11 @@ public sealed class PasskeySignUp : IPasskeySignUp
 
         string displayName = DisplayNameOf(request, handle);
         string? email = string.IsNullOrWhiteSpace(request?.Email) ? null : request.Email.Trim();
-        bool profileCreated = CreateProfile(handle, displayName, email);
+        bool profileCreated;
+        lock (ProfileLock)
+        {
+            profileCreated = PersonExists(handle) || CreateProfile(handle, displayName, email);
+        }
         SignedUpPerson person = new SignedUpPerson
         {
             PersonHandle = handle,
@@ -147,17 +155,20 @@ public sealed class PasskeySignUp : IPasskeySignUp
             Log.Warn("Profile completion for {0} refused: the handle has no passkey", PasskeyText.Printable(handle, PrintableHandleLength));
             return ProfileCompletion.NoPasskey;
         }
-        if (PersonExists(handle))
-        {
-            return ProfileCompletion.AlreadyExists;
-        }
         string? address = string.IsNullOrWhiteSpace(email) ? null : email.Trim();
-        if ((_policy.RequireEmail || address is not null) && !SignUpPolicy.IsPlausibleEmail(address))
-        {
-            return ProfileCompletion.InvalidEmail;
-        }
         string name = string.IsNullOrWhiteSpace(displayName) ? handle : Truncate(displayName.Trim());
-        return CreateProfile(handle, name, address) ? ProfileCompletion.Created : ProfileCompletion.Failed;
+        lock (ProfileLock)
+        {
+            if (PersonExists(handle))
+            {
+                return ProfileCompletion.AlreadyExists;
+            }
+            if ((_policy.RequireEmail || address is not null) && !SignUpPolicy.IsPlausibleEmail(address))
+            {
+                return ProfileCompletion.InvalidEmail;
+            }
+            return CreateProfile(handle, name, address) ? ProfileCompletion.Created : ProfileCompletion.Failed;
+        }
     }
 
     private SignUpRefusal Check(PasskeySignUpRequest? request, string handle)

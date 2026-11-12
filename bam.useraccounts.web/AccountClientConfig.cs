@@ -3,18 +3,13 @@ using Bam.UserAccounts.Passkeys;
 namespace Bam.UserAccounts.Web;
 
 /// <summary>
-/// What the page hands the browser module: where the endpoints are, the header to send, and the
-/// host's wording for the messages the module shows on its own.  Serialized into a data
-/// attribute on the page shell.
+/// What the page hands the browser module: whether the availability check is on, and the host's
+/// wording for the messages the module shows on its own.  Serialized into a data attribute on
+/// the page shell.  The endpoint prefix and the request header are constants in the module, never
+/// read from the page, so markup injected into a host page can't point the module elsewhere.
 /// </summary>
 public sealed class AccountClientConfig
 {
-    /// <summary>The endpoint prefix.</summary>
-    public string Prefix { get; set; } = AccountRoutes.Prefix;
-
-    /// <summary>The header every state-changing request carries.</summary>
-    public string Header { get; set; } = AccountRoutes.RequestHeader;
-
     /// <summary>Whether the handle availability check is mapped.</summary>
     public bool Availability { get; set; }
 

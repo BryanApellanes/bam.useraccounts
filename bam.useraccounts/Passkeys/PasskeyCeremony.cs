@@ -233,7 +233,7 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
             PubKeyCredParams = _options.Algorithms.Select(algorithm => new PasskeyCredentialParameter { Alg = (long)algorithm }).ToList(),
             Timeout = (long)_options.Timeout.TotalMilliseconds,
             Attestation = "none",
-            AuthenticatorSelection = new PasskeyAuthenticatorSelection { ResidentKey = _options.ResidentKey, UserVerification = _options.UserVerification },
+            AuthenticatorSelection = new PasskeyAuthenticatorSelection { ResidentKey = _options.ResidentKey, RequireResidentKey = _options.ResidentKey == "required", UserVerification = _options.UserVerification },
             ExcludeCredentials = existing.Select(Describe).ToList()
         };
     }

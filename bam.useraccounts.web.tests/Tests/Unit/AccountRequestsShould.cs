@@ -61,13 +61,19 @@ public class AccountRequestsShould : UnitTestMenuContainer
                 try
                 {
                     SyntheticAuthenticator alice = new SyntheticAuthenticator();
-                    closed.SignUp("alice", "Alice Example", alice);
+                    AccountReply closedSignUp = closed.SignUp("alice", "Alice Example", alice);
                     open.SignUp("alice", "Alice Example", new SyntheticAuthenticator());
+                    PasskeyAuthenticatorSelection closedRegistration = closed.Post("/account/passkey/registration/begin", new PasskeySignUpRequest { Handle = "carol", DisplayName = "Carol" }).As<CreationOptionsResponse>().Options.AuthenticatorSelection;
+                    PasskeyAuthenticatorSelection closedAdditional = closed.Post("/account/passkey/additional/begin", new AssertionBeginRequest(), closedSignUp.SessionCookie).As<CreationOptionsResponse>().Options.AuthenticatorSelection;
+                    PasskeyAuthenticatorSelection openRegistration = open.Post("/account/passkey/registration/begin", new PasskeySignUpRequest { Handle = "carol", DisplayName = "Carol" }).As<CreationOptionsResponse>().Options.AuthenticatorSelection;
+                    string closedPage = closed.Get("/account/signin").Body;
+                    string openPage = open.Get("/account/signin").Body;
                     RequestOptionsResponse taken = closed.Post("/account/passkey/assertion/begin", new AssertionBeginRequest { Handle = "alice" }).As<RequestOptionsResponse>();
                     RequestOptionsResponse unused = closed.Post("/account/passkey/assertion/begin", new AssertionBeginRequest { Handle = "nobody-here" }).As<RequestOptionsResponse>();
                     RequestOptionsResponse openTaken = open.Post("/account/passkey/assertion/begin", new AssertionBeginRequest { Handle = "alice" }).As<RequestOptionsResponse>();
                     AccountReply signIn = closed.SignIn(alice, "alice");
-                    return new PrivateHandleOutcome(taken.Options.AllowCredentials.Count, unused.Options.AllowCredentials.Count, openTaken.Options.AllowCredentials.Count, signIn);
+                    return new PrivateHandleOutcome(taken.Options.AllowCredentials.Count, unused.Options.AllowCredentials.Count, openTaken.Options.AllowCredentials.Count, signIn,
+                        closedRegistration, closedAdditional, openRegistration, closedPage.Contains("id=\"account-handle\"", StringComparison.Ordinal), openPage.Contains("id=\"account-handle\"", StringComparison.Ordinal));
                 }
                 finally
                 {
@@ -80,6 +86,10 @@ public class AccountRequestsShould : UnitTestMenuContainer
             {
                 because.ItsTrue($"a taken handle and an unused one get the same options ({outcome.TakenDescriptors}, {outcome.UnusedDescriptors})", outcome.TakenDescriptors == 0 && outcome.UnusedDescriptors == 0);
                 because.ItsTrue($"a host that publishes handles still scopes sign-in to the handle ({outcome.OpenDescriptors})", outcome.OpenDescriptors == 1);
+                because.ItsTrue($"every passkey registered there must be discoverable ({outcome.ClosedRegistration.ResidentKey}/{outcome.ClosedRegistration.RequireResidentKey}, additional {outcome.ClosedAdditional.ResidentKey}/{outcome.ClosedAdditional.RequireResidentKey})",
+                    outcome.ClosedRegistration.ResidentKey == "required" && outcome.ClosedRegistration.RequireResidentKey && outcome.ClosedAdditional.ResidentKey == "required" && outcome.ClosedAdditional.RequireResidentKey);
+                because.ItsTrue($"a host that publishes handles keeps the preference ({outcome.OpenRegistration.ResidentKey}/{outcome.OpenRegistration.RequireResidentKey})", outcome.OpenRegistration.ResidentKey == "preferred" && !outcome.OpenRegistration.RequireResidentKey);
+                because.ItsTrue($"the sign-in page asks for a handle only where it is used (private {outcome.ClosedAsksHandle}, public {outcome.OpenAsksHandle})", !outcome.ClosedAsksHandle && outcome.OpenAsksHandle);
                 because.ItsTrue($"and the person still signs in with the discoverable ceremony ({outcome.SignIn.Status}: {outcome.SignIn.Body})", outcome.SignIn.Status == HttpStatusCode.OK && outcome.SignIn.SessionCookie is not null);
             })
             .SoBeHappy()
@@ -136,7 +146,8 @@ public class AccountRequestsShould : UnitTestMenuContainer
 
     private sealed record BodyOutcome(AccountReply Accepted, AccountReply Declared, long DeclaredBytesRead, AccountReply Streamed, AccountReply PlainText, AccountReply Malformed);
 
-    private sealed record PrivateHandleOutcome(int TakenDescriptors, int UnusedDescriptors, int OpenDescriptors, AccountReply SignIn);
+    private sealed record PrivateHandleOutcome(int TakenDescriptors, int UnusedDescriptors, int OpenDescriptors, AccountReply SignIn,
+        PasskeyAuthenticatorSelection ClosedRegistration, PasskeyAuthenticatorSelection ClosedAdditional, PasskeyAuthenticatorSelection OpenRegistration, bool ClosedAsksHandle, bool OpenAsksHandle);
 
     private sealed record ProfileOutcome(SignUpFixture Fixture, AccountReply SignedUp, AccountReply Anonymous, AccountReply PageBefore, int PersonsAfterPage, AccountReply WithoutEmail,
         int PersonsAfterRefusal, AccountReply Saved, AccountReply PageAfter);

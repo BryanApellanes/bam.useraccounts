@@ -32,6 +32,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The browser module and the Node check BrowserModuleShould runs against it. -->
+    <None Update="BrowserModule\passkeys.check.mjs" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\bam.useraccounts.web\wwwroot\passkeys.js" Link="BrowserModule\passkeys.js" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The linked PasskeyFixture and SignUpFixture substitute the account service and profile repository. -->
     <PackageReference Include="NSubstitute" Version="5.3.0" />
   </ItemGroup>

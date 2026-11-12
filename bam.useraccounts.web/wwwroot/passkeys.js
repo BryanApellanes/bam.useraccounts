@@ -1,29 +1,57 @@
 // bam.useraccounts.web passkey module.
 //
-// Runs the WebAuthn ceremonies for the account pages against the JSON endpoints under the
-// account prefix, and handles every element carrying data-account-action. The page shell hands
-// it its settings (endpoint prefix, request header, the host's wording) in a data-account-config
-// attribute. Each exported function can also be called directly.
+// Runs the WebAuthn ceremonies for the account pages against the JSON endpoints under /account,
+// and handles the data-account-action elements inside the account shell. The shell hands it the
+// host's wording in a data-account-config attribute. Each exported function can also be called
+// directly.
 //
 // A module is evaluated once per document, and Blazor's enhanced navigation swaps pages in
 // without reloading it. So nothing here binds to page elements: one set of listeners on the
-// document handles whatever page is showing, and the settings are read from the current page
-// each time they're needed.
+// document handles whatever page is showing.
+//
+// The module may load on every page of a host, next to content the host didn't write. So it
+// takes nothing that decides where a request goes or where the browser navigates from the page:
+// the prefix and the header are constants, an element counts only inside the shell the account
+// pages render, and every redirect target must be a local path.
 
-export const version = "1";
+export const version = "2";
 
-const defaults = { prefix: "/account", header: "X-Bam-Account", availability: false, messages: {} };
+const prefix = "/account";
+const header = "X-Bam-Account";
+const shellSelector = "[data-account-config]";
+const defaults = { availability: false, messages: {} };
 
-function settings() {
-    const shell = document.querySelector("[data-account-config]");
+// The shell whose action is running, for its wording. Null outside an action.
+let activeShell = null;
+
+function settingsOf(shell) {
     if (!shell) {
         return defaults;
     }
     try {
-        return Object.assign({}, defaults, JSON.parse(shell.dataset.accountConfig));
+        const parsed = JSON.parse(shell.dataset.accountConfig);
+        return {
+            availability: parsed.availability === true,
+            messages: parsed.messages && typeof parsed.messages === "object" ? parsed.messages : {}
+        };
     } catch {
         return defaults;
     }
+}
+
+/** Whether a URL is a path on this site, by the same rule as the server's AccountRoutes.IsLocalPath. */
+export function isLocalPath(url) {
+    if (typeof url !== "string" || url.length === 0 || url[0] !== "/") {
+        return false;
+    }
+    if (url.length > 1 && (url[1] === "/" || url[1] === "\\")) {
+        return false;
+    }
+    return !/[\u0000-\u001f\u007f-\u009f\\]/.test(url);
+}
+
+function go(url, fallback) {
+    location.assign(isLocalPath(url) ? url : fallback);
 }
 
 /** An endpoint refusal: a coarse code and the host's message for it. */
@@ -37,7 +65,8 @@ export class AccountError extends Error {
 }
 
 function message(key, fallback) {
-    return settings().messages[key] || fallback || "";
+    const text = settingsOf(activeShell).messages[key];
+    return typeof text === "string" && text ? text : fallback || "";
 }
 
 export function bytesToBase64Url(buffer) {
@@ -104,15 +133,14 @@ function credentialToJson(credential) {
 }
 
 async function call(method, path, body) {
-    const config = settings();
     const headers = { Accept: "application/json" };
-    headers[config.header] = "1";
+    headers[header] = "1";
     const init = { method, headers, credentials: "same-origin" };
     if (body !== undefined) {
         headers["Content-Type"] = "application/json";
         init.body = JSON.stringify(body);
     }
-    const response = await fetch(config.prefix + path, init);
+    const response = await fetch(prefix + path, init);
     const isJson = (response.headers.get("Content-Type") || "").startsWith("application/json");
     const payload = isJson ? await response.json() : null;
     if (response.ok) {
@@ -199,19 +227,26 @@ export function checkHandle(handle) {
 }
 
 // ---- page binding ---------------------------------------------------------------------------
+//
+// Everything below acts only on elements inside an account shell, and reads that shell's
+// settings, never the first shell or form id in the document.
 
-function status(text, failed) {
-    const element = document.querySelector("[data-account-status]");
+function shellOf(element) {
+    return element ? element.closest(shellSelector) : null;
+}
+
+function status(shell, text, failed) {
+    const element = shell.querySelector("[data-account-status]");
     if (element) {
         element.textContent = text || "";
         element.classList.toggle("account-status-error", Boolean(failed));
     }
 }
 
-function fields(formId) {
+function fields(shell, formId) {
     const values = {};
     const form = formId ? document.getElementById(formId) : null;
-    if (form) {
+    if (form && shell.contains(form)) {
         for (const [name, value] of new FormData(form).entries()) {
             values[name] = typeof value === "string" ? value.trim() : value;
         }
@@ -219,21 +254,23 @@ function fields(formId) {
     return values;
 }
 
+const signedOutUrl = prefix + "/signedout";
+
 const actions = {
-    async register(button) {
-        const done = await register(fields(button.dataset.accountForm));
-        location.assign(done.nextUrl);
+    async register(button, shell) {
+        const done = await register(fields(shell, button.dataset.accountForm));
+        go(done && done.nextUrl, prefix);
     },
-    async signin(button) {
-        const done = await signIn(fields(button.dataset.accountForm).handle, button.dataset.accountReturn);
-        location.assign(done.nextUrl);
+    async signin(button, shell) {
+        const done = await signIn(fields(shell, button.dataset.accountForm).handle, button.dataset.accountReturn);
+        go(done && done.nextUrl, prefix);
     },
-    async add(button) {
-        await addPasskey(fields(button.dataset.accountForm).name);
+    async add(button, shell) {
+        await addPasskey(fields(shell, button.dataset.accountForm).name);
         location.reload();
     },
-    async rename(button) {
-        await rename(button.dataset.accountCredential, fields(button.dataset.accountForm).name);
+    async rename(button, shell) {
+        await rename(button.dataset.accountCredential, fields(shell, button.dataset.accountForm).name);
         location.reload();
     },
     async remove(button) {
@@ -241,43 +278,47 @@ const actions = {
             return;
         }
         const done = await remove(button.dataset.accountCredential);
-        if (done && done.signedOut && done.nextUrl) {
-            location.assign(done.nextUrl);
+        if (done && done.signedOut) {
+            go(done.nextUrl, signedOutUrl);
         } else {
             location.reload();
         }
     },
-    async profile(button) {
-        await completeProfile(fields(button.dataset.accountForm));
+    async profile(button, shell) {
+        await completeProfile(fields(shell, button.dataset.accountForm));
         location.reload();
     },
     async signout() {
         const done = await signOut();
-        location.assign(done && done.nextUrl || settings().prefix + "/signedout");
+        go(done && done.nextUrl, signedOutUrl);
     }
 };
 
 const ceremonies = new Set(["register", "signin", "add"]);
 
 async function run(button) {
-    const action = actions[button.dataset.accountAction];
-    if (!action || button.disabled) {
+    const shell = shellOf(button);
+    const action = Object.prototype.hasOwnProperty.call(actions, button.dataset.accountAction) ? actions[button.dataset.accountAction] : null;
+    if (!shell || !action || button.disabled) {
         return;
     }
     button.disabled = true;
-    status(ceremonies.has(button.dataset.accountAction) ? message("working") : "", false);
+    activeShell = shell;
+    status(shell, ceremonies.has(button.dataset.accountAction) ? message("working") : "", false);
     try {
-        await action(button);
+        await action(button, shell);
     } catch (error) {
-        status(error instanceof AccountError ? error.message : message("actionFailed", "That didn't work."), true);
+        status(shell, error instanceof AccountError ? error.message : message("actionFailed", "That didn't work."), true);
     } finally {
         button.disabled = false;
+        activeShell = null;
     }
 }
 
 async function checkAvailability(input) {
-    const hint = document.querySelector("[data-account-handle-hint]");
-    if (!hint || !settings().availability) {
+    const shell = shellOf(input);
+    const hint = shell ? shell.querySelector("[data-account-handle-hint]") : null;
+    if (!hint || !settingsOf(shell).availability) {
         return;
     }
     if (hint.dataset.accountHelp === undefined) {
@@ -289,17 +330,19 @@ async function checkAvailability(input) {
         hint.textContent = help;
         return;
     }
+    const messages = settingsOf(shell).messages;
     try {
         const answer = await checkHandle(handle);
         const key = answer.available ? "handleAvailable" : answer.reason === "Taken" ? "handleTaken" : answer.reason === "Invalid" ? "handleInvalid" : null;
-        hint.textContent = key ? message(key, help) : help;
+        hint.textContent = key && typeof messages[key] === "string" ? messages[key] : help;
     } catch {
         hint.textContent = help;
     }
 }
 
 function targetOf(event, selector) {
-    return event.target instanceof Element ? event.target.closest(selector) : null;
+    const element = event.target instanceof Element ? event.target.closest(selector) : null;
+    return element && shellOf(element) ? element : null;
 }
 
 document.addEventListener("click", event => {

@@ -304,6 +304,34 @@ public class PasskeySignUpShould : UnitTestMenuContainer
     }
 
     [UnitTest]
+    public void WriteOneProfileWhenTwoCompletionsRace()
+    {
+        After.Setup(reg => reg.Set(new SignUpFixture()))
+        .When<SignUpFixture>("finishes a lost profile from two places at once", (fixture, reg) =>
+        {
+            fixture.RegisterPersonThrows = new InvalidOperationException("store is down");
+            fixture.Run(Request(), new SyntheticAuthenticator());
+            fixture.RegisterPersonThrows = null;
+            // Both lookups read "no person" before either writes, unless something serializes them.
+            fixture.FindPersonRendezvous = new Barrier(2);
+            Task<ProfileCompletion> tab = Task.Run(() => fixture.SignUp.CompleteProfile("jane-doe", "Jane Doe", null));
+            Task<ProfileCompletion> app = Task.Run(() => fixture.SignUp.CompleteProfile("jane-doe", "Jane Doe", null));
+            List<ProfileCompletion> outcomes = new List<ProfileCompletion> { tab.GetAwaiter().GetResult(), app.GetAwaiter().GetResult() };
+            fixture.FindPersonRendezvous = null;
+            return new ProfileRaceOutcome(fixture, outcomes);
+        })
+        .TheTest
+        .ShouldPass<ProfileRaceOutcome>((because, outcome) =>
+        {
+            because.ItsTrue($"one completion writes and the other finds it ({string.Join(", ", outcome.Outcomes)})",
+                outcome.Outcomes.Count(result => result == ProfileCompletion.Created) == 1 && outcome.Outcomes.Count(result => result == ProfileCompletion.AlreadyExists) == 1);
+            because.ItsTrue($"so the handle has one person ({outcome.Fixture.RegisteredPersons.Count})", outcome.Fixture.RegisteredPersons.Count == 1);
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    [UnitTest]
     public void RunPostSignUpStepsInOrder()
     {
         After.Setup(reg => reg.Set(new SignUpFixture()))
@@ -454,6 +482,8 @@ public class PasskeySignUpShould : UnitTestMenuContainer
         bool HadProfile, ProfileCompletion BadEmail, int AttemptsAfterBadEmail, ProfileCompletion Finished, bool HasProfileAfter, ProfileCompletion FinishedAgain, int AttemptsAfterFinish);
 
     private sealed record RequiredEmailOutcome(SignUpFixture Fixture, PasskeySignUpResult Faulted, ProfileCompletion WithoutEmail, int PersonsAfterRefusal, ProfileCompletion WithEmail);
+
+    private sealed record ProfileRaceOutcome(SignUpFixture Fixture, List<ProfileCompletion> Outcomes);
 
     private sealed record StepsOutcome(SignUpFixture Fixture, PasskeySignUpResult Result, List<SignedUpPerson> Seen);
 

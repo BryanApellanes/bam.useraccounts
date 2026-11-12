@@ -82,7 +82,8 @@ public class AccountOptionsShould : UnitTestMenuContainer
                 because.ItsTrue("the cookie is SameSite=Lax", site.Cookie.SameSite == SameSiteMode.Lax);
                 because.ItsTrue("rate limits are on: 10 and 30 a minute", site.RateLimits.Enabled && site.RateLimits.PermitLimit == 10 && site.RateLimits.AvailabilityPermitLimit == 30 && site.RateLimits.Window == TimeSpan.FromMinutes(1));
                 because.ItsTrue("people land on the manage page", site.DefaultReturnUrl == "/account" && site.SignedOutUrl == "/account/signedout");
-                because.ItsTrue("the browser module is told the prefix, the header and the host's wording", outcome.Client.Prefix == "/account" && outcome.Client.Header == "X-Bam-Account" && outcome.Client.Availability && outcome.Client.Messages["signInFailed"] == site.Strings.SignInFailedMessage);
+                because.ItsTrue("the browser module is told the host's wording, and not where to send requests", outcome.Client.Availability && outcome.Client.Messages["signInFailed"] == site.Strings.SignInFailedMessage
+                    && !outcome.Client.ToJson().Contains("prefix", StringComparison.OrdinalIgnoreCase) && !outcome.Client.ToJson().Contains("header", StringComparison.OrdinalIgnoreCase));
                 because.ItsTrue("local paths are told from other sites' URLs", AccountRoutes.IsLocalPath("/app?x=1") && !AccountRoutes.IsLocalPath("//evil.example") && !AccountRoutes.IsLocalPath("/\\evil.example") && !AccountRoutes.IsLocalPath("https://evil.example") && !AccountRoutes.IsLocalPath("app") && !AccountRoutes.IsLocalPath(null) && !AccountRoutes.IsLocalPath("/a\nb"));
             })
             .SoBeHappy()

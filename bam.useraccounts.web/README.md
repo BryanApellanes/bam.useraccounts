@@ -64,6 +64,8 @@ The browser module listens on the document rather than binding to page elements,
 <script type="module" src="_content/bam.useraccounts.web/passkeys.js"></script>
 ```
 
+Loaded that way, the module runs next to content the host didn't write: comments, bios, rendered markdown. So it takes nothing from the page that decides where a request goes or where the browser navigates. The prefix and the request header are constants in the module. It acts only on `data-account-action` elements inside the account shell the pages render, and reads forms only from that shell. Before it navigates it checks the target is a local path, by the same rule the server uses, and falls back to `/account` or `/account/signedout` if it isn't. The shell's `data-account-config` carries only the availability flag and the host's wording.
+
 The account layout loads the same URL, and a module only runs once per document, so loading it twice is harmless.
 
 ## Branding
@@ -83,7 +85,7 @@ Markup carries Bootstrap 5 classes. The library ships only `account.css`, which 
 
 `AccountSiteOptions.SignUp` is the core `SignUpPolicy`: `OpenSignUp`, `InviteCodes`, `RequireEmail`, `HandlePattern`, `ReservedHandlePrefixes`, `AllowHandleAvailabilityCheck`. With sign-up closed and no invite codes the page shows a message and no form.
 
-The availability check is on by default because a handle is a public identifier. Turn it off and handles stay private: the endpoint isn't mapped, a taken handle fails sign-up without saying why, and sign-in ignores the handle it's sent and runs the discoverable ceremony. A handle-scoped sign-in lists that handle's passkeys, which would say the handle exists. The cost is that a passkey that isn't discoverable can't be offered by handle on such a host.
+The availability check is on by default because a handle is a public identifier. Turn it off and handles stay private: the endpoint isn't mapped, a taken handle fails sign-up without saying why, and sign-in ignores the handle it's sent and runs the discoverable ceremony. A handle-scoped sign-in lists that handle's passkeys, which would say the handle exists. So every passkey there has to be discoverable. `AddPasskeyAccounts` sets `PasskeyOptions.ResidentKey` to `required` on such a host (for sign-up and for added passkeys alike), and the browser refuses an authenticator that can't store one rather than creating a passkey that could never sign in. The sign-in page doesn't show the handle field there, since it would be ignored.
 
 A host runs its own step after sign-up by registering an `IPostSignUpStep` on the registry (`registry.AddPostSignUpStep<MyStep>()`). Its `NextUrl` is where the new person lands, when it is a path on the site.
 
@@ -112,7 +114,7 @@ All under `/account`, JSON in and out, camelCase. The types are in `AccountWire.
 | `GET /passkeys` | | `{ passkeys: [{ id, name, createdUtc, lastUsedUtc, current, registeredKeySet }] }`. Session required |
 | `POST /passkeys/{id}/name` | `{ name }` | 204. Session required |
 | `DELETE /passkeys/{id}` | | `{ signedOut, nextUrl }`. Session required |
-| `POST /profile` | `{ displayName, email? }` | 204. Session required. Saves a profile that wasn't saved at sign-up |
+| `POST /profile` | `{ displayName, email? }` | 204 when saved or already there. 400 `EmailRequired` when the host requires an email and none (or an implausible one) is sent. 409 `ProfileNotSaved` when the store refuses or the session's handle has no passkey. 401 without a session. Saves a profile that wasn't saved at sign-up. The session's display name updates at the next sign-in |
 | `POST /signout` | `{}` | `{ signedOut, nextUrl }` |
 | `GET /handle/{handle}/availability` | | `{ handle, available, reason }` |
 

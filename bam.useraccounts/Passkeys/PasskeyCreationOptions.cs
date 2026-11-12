@@ -77,6 +77,9 @@ public sealed record PasskeyAuthenticatorSelection
     /// <summary>The resident-key preference (<c>discouraged</c>, <c>preferred</c>, <c>required</c>).</summary>
     public string ResidentKey { get; init; } = "preferred";
 
+    /// <summary>The Level 1 form of <see cref="ResidentKey"/>: true exactly when it is <c>required</c>, for browsers that predate <c>residentKey</c>.</summary>
+    public bool RequireResidentKey { get; init; }
+
     /// <summary>The user-verification preference (<c>discouraged</c>, <c>preferred</c>, <c>required</c>).</summary>
     public string UserVerification { get; init; } = "preferred";
 }

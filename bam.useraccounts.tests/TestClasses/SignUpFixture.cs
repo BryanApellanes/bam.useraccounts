@@ -31,8 +31,11 @@ public sealed class SignUpFixture
             {
                 return new RegistrationResult { Success = false, Message = "refused by the validator" };
             }
-            RegisteredPersons.Add(data);
-            Persons.Add(data.Handle);
+            lock (RegisteredPersons)
+            {
+                RegisteredPersons.Add(data);
+                Persons.Add(data.Handle);
+            }
             IProfile profile = Substitute.For<IProfile>();
             profile.ProfileHandle.Returns("profile-" + data.Handle);
             profile.PersonHandle.Returns(data.Handle);
@@ -48,7 +51,16 @@ public sealed class SignUpFixture
         });
         Profiles = Substitute.For<IProfileRepository>();
         Profiles.FindPersonByHandle(Arg.Any<string>()).Returns(callInfo =>
-            Persons.Contains(callInfo.Arg<string>()) ? new PersonData { Handle = callInfo.Arg<string>() } : null!);
+        {
+            bool found;
+            lock (RegisteredPersons)
+            {
+                found = Persons.Contains(callInfo.Arg<string>());
+            }
+            // A rendezvous after the read lets a test hold two lookups until both have read.
+            FindPersonRendezvous?.SignalAndWait(RendezvousTimeout);
+            return found ? new PersonData { Handle = callInfo.Arg<string>() } : null!;
+        });
         SignUp = new PasskeySignUp(Passkeys.Ceremony, Accounts, Passkeys.Credentials, Profiles, Policy, Steps);
     }
 
@@ -67,6 +79,11 @@ public sealed class SignUpFixture
 
     /// <summary>Profile names set through <c>UpdateProfile</c>, by profile handle.</summary>
     public Dictionary<string, string> ProfileNames { get; } = new Dictionary<string, string>(StringComparer.Ordinal);
+
+    /// <summary>When set, every person lookup waits here (up to <see cref="RendezvousTimeout"/>) after reading.</summary>
+    public Barrier? FindPersonRendezvous { get; set; }
+
+    public TimeSpan RendezvousTimeout { get; set; } = TimeSpan.FromMilliseconds(500);
 
     public int RegisterAttempts { get; private set; }
     public Exception? RegisterPersonThrows { get; set; }

@@ -8,10 +8,15 @@
         <DynamicComponent Type="Site.Slots.Hero" />
     }
     <form id="account-signin" class="account-form" method="post" action="@AccountRoutes.SignIn" novalidate>
-        <div class="mb-3">
-            <label class="form-label" for="account-handle">@Site.Strings.SignInHandleLabel</label>
-            <input class="form-control" id="account-handle" name="handle" type="text" autocomplete="username webauthn" autocapitalize="none" spellcheck="false" maxlength="64" />
-        </div>
+        @* A host that keeps handles private signs in by the authenticator's own offer and ignores a
+           typed handle, so it doesn't ask for one. *@
+        @if (Site.SignUp.AllowHandleAvailabilityCheck)
+        {
+            <div class="mb-3">
+                <label class="form-label" for="account-handle">@Site.Strings.SignInHandleLabel</label>
+                <input class="form-control" id="account-handle" name="handle" type="text" autocomplete="username webauthn" autocapitalize="none" spellcheck="false" maxlength="64" />
+            </div>
+        }
         <PasskeyButton Mode="signin" FormId="account-signin" Label="@Site.Strings.SignInWithPasskey" ReturnUrl="@LocalReturnUrl" />
     </form>
     <p class="account-alternate"><a href="@AccountRoutes.SignUp" data-enhance-nav="false">@Site.Strings.NeedAccount</a></p>

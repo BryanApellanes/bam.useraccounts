@@ -24,6 +24,13 @@ public static class AccountWebRegistration
     public const string Policy = "Bam.Account";
 
     /// <summary>
+    /// The <c>residentKey</c> value <see cref="AddPasskeyAccounts"/> sets when
+    /// <see cref="SignUpPolicy.AllowHandleAvailabilityCheck"/> is off: sign-in there never names
+    /// a credential, so every passkey must be discoverable.
+    /// </summary>
+    public const string DiscoverableResidentKey = "required";
+
+    /// <summary>
     /// Registers the account template.  The registry must already bind what the host owns: an
     /// <see cref="IPublicKeySetRegistrar"/>, an <see cref="IUserAccountService"/> and an
     /// <see cref="IProfileRepository"/> (and whatever the persisted passkey and challenge
@@ -41,6 +48,12 @@ public static class AccountWebRegistration
         ArgumentNullException.ThrowIfNull(site);
         ArgumentNullException.ThrowIfNull(passkeys);
         site.Validate();
+        if (!site.SignUp.AllowHandleAvailabilityCheck)
+        {
+            // A host that keeps handles private signs in with the discoverable ceremony only, so a
+            // passkey the authenticator can't offer by itself could never be used. Ask for one it can.
+            passkeys.ResidentKey = DiscoverableResidentKey;
+        }
         registry.AddPasskeys(passkeys).AddPasskeySignUp(site.SignUp);
 
         services.AddSingleton(site);
