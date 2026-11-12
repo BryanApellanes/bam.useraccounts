@@ -124,6 +124,11 @@ public sealed class PasskeyOptions
         {
             throw new ArgumentException("PasskeyOptions.ChallengeLifetime must be positive.");
         }
+        // Browsers ignore a residentKey value they don't know, so a typo would silently drop the preference.
+        if (ResidentKey is not ("discouraged" or "preferred" or "required"))
+        {
+            throw new ArgumentException($"PasskeyOptions.ResidentKey '{ResidentKey}' must be discouraged, preferred or required (lowercase).");
+        }
     }
 
     /// <summary>

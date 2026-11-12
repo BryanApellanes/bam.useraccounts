@@ -1,0 +1,54 @@
+@page "/account/signup"
+@* Sign-up: pick a handle, create a passkey, be signed in.  Static server rendering; the browser
+   module runs the passkey ceremony against the account endpoints. *@
+@inject AccountSiteOptions Site
+
+<AccountLayout Title="@Site.Strings.SignUpTitle">
+    @if (Site.Slots.Hero is not null)
+    {
+        <DynamicComponent Type="Site.Slots.Hero" />
+    }
+    @if (Closed)
+    {
+        <p class="account-closed">@Site.Strings.SignUpClosed</p>
+    }
+    else
+    {
+        <form id="account-signup" class="account-form" method="post" action="@AccountRoutes.SignUp" novalidate>
+            <div class="mb-3">
+                <label class="form-label" for="account-handle">@Site.Strings.HandleLabel</label>
+                <input class="form-control" id="account-handle" name="handle" type="text" autocomplete="username" autocapitalize="none"
+                       spellcheck="false" maxlength="64" required data-account-handle />
+                <div class="form-text" data-account-handle-hint>@Site.Strings.HandleHelp</div>
+            </div>
+            <div class="mb-3">
+                <label class="form-label" for="account-name">@Site.Strings.DisplayNameLabel</label>
+                <input class="form-control" id="account-name" name="displayName" type="text" autocomplete="name" maxlength="@SignUpPolicy.MaxDisplayNameLength" required />
+            </div>
+            <div class="mb-3">
+                <label class="form-label" for="account-email">
+                    @Site.Strings.EmailLabel
+                    @if (!Site.SignUp.RequireEmail)
+                    {
+                        <span class="text-muted">@Site.Strings.OptionalSuffix</span>
+                    }
+                </label>
+                <input class="form-control" id="account-email" name="email" type="email" autocomplete="email" maxlength="@SignUpPolicy.MaxEmailLength" required="@Site.SignUp.RequireEmail" />
+            </div>
+            @if (!Site.SignUp.OpenSignUp)
+            {
+                <div class="mb-3">
+                    <label class="form-label" for="account-invite">@Site.Strings.InviteCodeLabel</label>
+                    <input class="form-control" id="account-invite" name="inviteCode" type="text" autocomplete="off" maxlength="200" required />
+                </div>
+            }
+            <PasskeyButton Mode="register" FormId="account-signup" Label="@Site.Strings.CreatePasskey" />
+        </form>
+    }
+    <p class="account-alternate"><a href="@AccountRoutes.SignIn" data-enhance-nav="false">@Site.Strings.HaveAccount</a></p>
+</AccountLayout>
+
+@code {
+    // Closed with no invite codes: nobody can sign up, so no form is shown.
+    private bool Closed => !Site.SignUp.OpenSignUp && Site.SignUp.InviteCodes.Count == 0;
+}

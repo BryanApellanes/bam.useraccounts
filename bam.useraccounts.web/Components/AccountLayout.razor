@@ -1,0 +1,37 @@
+@* The shell every account page renders inside: brand, title, content, status line, footer.
+   A plain component rather than a layout, so the host's own layout (navigation, document head)
+   still wraps the page. *@
+@inject AccountSiteOptions Site
+
+<PageTitle>@Title · @Site.ProductName</PageTitle>
+<link rel="stylesheet" href="@AccountRoutes.Stylesheet" />
+<div class="account-shell" style="@Site.Theme.ToStyleAttribute()" data-account-config="@AccountClientConfig.For(Site).ToJson()">
+    <main class="account-card card">
+        <header class="account-brand">
+            @if (!string.IsNullOrWhiteSpace(Site.LogoUrl))
+            {
+                <img class="account-logo" src="@Site.LogoUrl" alt="@Site.ProductName" />
+            }
+            <span class="account-product">@Site.ProductName</span>
+            @if (!string.IsNullOrWhiteSpace(Site.Tagline))
+            {
+                <span class="account-tagline text-muted">@Site.Tagline</span>
+            }
+        </header>
+        <h1 class="account-title h4">@Title</h1>
+        @ChildContent
+        <p class="account-status" role="status" aria-live="polite" data-account-status></p>
+    </main>
+    <AccountFooter />
+</div>
+<script type="module" src="@AccountRoutes.Module" suppress-error="BL9992"></script>
+
+@code {
+    /// <summary>The page heading and the first half of the document title.</summary>
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = string.Empty;
+
+    /// <summary>The page body.</summary>
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+}

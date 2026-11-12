@@ -210,6 +210,23 @@ iOS and Mac Catalyst apps present `https://<rp id>`, so `AllowedOrigins` already
 
 The app's domain also has to vouch for the app (`/.well-known/assetlinks.json` for Android, `/.well-known/apple-app-site-association` for Apple) or the operating system refuses the ceremony before the server sees it. Serving those from options is tracked in #13.
 
+### Passkey sign-up and the account template
+
+`IPasskeySignUp` runs sign-up end to end over the ceremony: the host's `SignUpPolicy` (open or invite-only, handle rules, optional email), the passkey registration that claims the handle, the person profile, then every registered `IPostSignUpStep`. `IPasskeyInventory` holds the manage-page rules: list, rename, remove, never the last passkey, never another person's. Neither depends on a web host.
+
+```csharp
+registry.AddPasskeys(passkeyOptions).AddPasskeySignUp(new SignUpPolicy { OpenSignUp = false, InviteCodes = { "welcome-2026" } });
+registry.AddPostSignUpStep<MyPostSignUpStep>();
+
+IPasskeySignUp signUp = registry.Get<IPasskeySignUp>();
+PasskeySignUpBeginResult begun = signUp.Begin(request);            // options for the browser, or a SignUpRefusal
+PasskeySignUpResult done = signUp.Complete(request, response);     // the same request again, plus the browser's response
+```
+
+`Complete` takes the request again because nothing from `Begin` is kept on the server except the challenge. The profile is written after the passkey claims the handle; if that write fails, `ProfileCreated` is false, the person can still sign in, and `CompleteProfile` saves it later from the details they enter again (`HasProfile` says whether it's needed).
+
+`bam.useraccounts.web` is the Blazor shell over these: branded pages, JSON endpoints, a session cookie and the browser module. See [bam.useraccounts.web/README.md](bam.useraccounts.web/README.md).
+
 ## Known Gaps / Not Yet Implemented
 
 - **`IAuthenticator` interface** -- Contains a `TODO: redesign this concept to align with modern authentication concepts` comment, suggesting a future move toward challenge-based authentication.

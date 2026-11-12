@@ -1,0 +1,31 @@
+@* Legal slot, terms, privacy and support links, and the parent-brand line the host chose. *@
+@inject AccountSiteOptions Site
+
+<footer class="account-footer text-muted small">
+    @if (Site.Slots.Legal is not null)
+    {
+        <DynamicComponent Type="Site.Slots.Legal" />
+    }
+    <nav class="account-links">
+        @if (!string.IsNullOrWhiteSpace(Site.TermsUrl))
+        {
+            <a href="@Site.TermsUrl">@Site.Strings.TermsLink</a>
+        }
+        @if (!string.IsNullOrWhiteSpace(Site.PrivacyUrl))
+        {
+            <a href="@Site.PrivacyUrl">@Site.Strings.PrivacyLink</a>
+        }
+        @if (!string.IsNullOrWhiteSpace(Site.SupportEmail))
+        {
+            <a href="mailto:@Site.SupportEmail">@Site.Strings.SupportLink</a>
+        }
+    </nav>
+    @if (Site.Branding == BrandingTier.ThreeHeadzCompany)
+    {
+        <span class="account-parent">A Three Headz company</span>
+    }
+    else if (Site.Branding == BrandingTier.ThreeHeadzPlatform)
+    {
+        <span class="account-parent">A Three Headz platform</span>
+    }
+</footer>
