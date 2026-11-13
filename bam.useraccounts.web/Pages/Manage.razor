@@ -86,7 +86,7 @@
     public HttpContext? HttpContext { get; set; }
 
     /// <inheritdoc />
-    protected override async Task OnInitializedAsync()
+    protected override void OnInitialized()
     {
         string? handle = AccountPrincipal.Handle(HttpContext?.User);
         if (handle is null)
@@ -102,9 +102,9 @@
         // Whether removing the key-set passkey moves the key first (#20) or leaves it on record (A).
         _keySetMoves = Handover.IsAvailable;
         // Where the key set can move, the badge follows the registrar (what removing the passkey will
-        // actually do), not the stored flag. It runs off the renderer's dispatcher: resolving through
-        // the registrar's object store on it hung the page render.
-        _keySetHolders = _keySetMoves ? await Task.Run(() => KeySetHolders(_passkeys)) : new HashSet<string>(StringComparer.Ordinal);
+        // actually do), not the stored flag. Resolving on the renderer's dispatcher needs
+        // bam.data.objects#13's fix; before it, the object store deadlocked there.
+        _keySetHolders = _keySetMoves ? KeySetHolders(_passkeys) : new HashSet<string>(StringComparer.Ordinal);
         // Sign-up writes the profile after the passkey claims the handle. If that write failed,
         // the page asks for the details again rather than writing a profile the person didn't give.
         _profileComplete = SignUp.HasProfile(handle);
@@ -122,8 +122,9 @@
         {
             return passkeys.Where(passkey => Handover.IsRequiredFor(passkey)).Select(passkey => passkey.CredentialId).ToHashSet(StringComparer.Ordinal);
         }
-        catch (Exception)
+        catch (Exception e)
         {
+            Bam.Logging.Log.Warn("Manage page could not ask the registrar which passkey holds the key set; showing the stored flags: {0}", e.GetType().Name);
             return passkeys.Where(passkey => passkey.IsRegisteredKeySet).Select(passkey => passkey.CredentialId).ToHashSet(StringComparer.Ordinal);
         }
     }
