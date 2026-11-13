@@ -33,7 +33,6 @@ public class KeySetHandoverShould : UnitTestMenuContainer
             SyntheticAuthenticator third = new SyntheticAuthenticator(CoseAlgorithm.ES256);
             string firstId = fixture.SignUp(first);
             string secondId = fixture.Add(second);
-
             PasskeyRemoval plainRemoval = fixture.Inventory.Remove(Handle, firstId);
             PasskeyRemoval heirRemoval = fixture.Inventory.Remove(Handle, secondId, keepKeySet: false);
             bool heirStillThere = fixture.Credentials.FindByCredentialId(secondId) is not null;
@@ -42,8 +41,7 @@ public class KeySetHandoverShould : UnitTestMenuContainer
             secondId = fixture.Add(second);
 
             PublicKeySetData before = fixture.Registrar.Resolve(Handle)!;
-            KeySetHandoverStart start = fixture.Handover.Begin(Handle, firstId, null, secondId);
-            byte[] expectedChallenge = PasskeyKeySetRotationProof.Challenge(before, PasskeyKeySet.From(fixture.Credentials.FindByCredentialId(secondId)!));
+            KeySetHandoverStart start = fixture.Handover.Begin(Handle, firstId, null, secondId);            byte[] expectedChallenge = PasskeyKeySetRotationProof.Challenge(before, PasskeyKeySet.From(fixture.Credentials.FindByCredentialId(secondId)!));
             bool challengeIsTheRotation = start.Options is not null && Base64UrlEncoder.Default.Decode(start.Options.Challenge).SequenceEqual(expectedChallenge);
             bool allowsOnlyTheOldPasskey = start.Options is not null && start.Options.AllowCredentials.Count == 1 && start.Options.AllowCredentials[0].Id == firstId;
             KeySetHandoverResult done = fixture.Handover.Complete(Handle, start.HandoverId, HandoverFixture.AssertionJson(first, start));
@@ -271,7 +269,12 @@ public class KeySetHandoverShould : UnitTestMenuContainer
             bool heirRefused = !proof.Verify(current, proposed, HandoverFixture.AssertionJson(second, challenge)).Success;
             bool bobRefused = !proof.Verify(current, proposed, HandoverFixture.AssertionJson(bobs, challenge)).Success;
             bool untaggedRefused = !proof.Verify(current, proposed, HandoverFixture.AssertionJson(first, System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(KeySetRotationPayload.Compose(KeySetRotationPayload.AnchorSha256(current), proposed))))).Success;
-            bool otherHandleRefused = !proof.Verify(current, PasskeyKeySet.From("bob", CoseAlgorithm.ES256, second.PublicKeyPem), HandoverFixture.AssertionJson(first, challenge)).Success;
+            // Signed over the other handle's own challenge, so only the handle check can refuse it.
+            PublicKeySetData toBob = PasskeyKeySet.From("bob", CoseAlgorithm.ES256, second.PublicKeyPem);
+            bool otherHandleRefused = !proof.Verify(current, toBob, HandoverFixture.AssertionJson(first, PasskeyKeySetRotationProof.Challenge(current, toBob))).Success;
+            // Signed by the key-set passkey but naming another passkey: only the id check can refuse it.
+            first.SignCount++;
+            bool otherIdRefused = !proof.Verify(current, proposed, Encoding.UTF8.GetBytes(PasskeyJson.Serialize(first.Assert(challenge, id: secondId)))).Success;
             ISignatureVerification garbage = proof.Verify(current, proposed, Encoding.UTF8.GetBytes("{\"id\":\"" + firstId + "\",\"response\":{\"signature\":\"c2VjcmV0LWJ5dGVz\""));
             bool garbageMessageClean = !garbage.Success && !garbage.Message.Contains("c2VjcmV0", StringComparison.Ordinal) && !garbage.Message.Contains(firstId, StringComparison.Ordinal);
 
@@ -281,7 +284,7 @@ public class KeySetHandoverShould : UnitTestMenuContainer
             pendingHeir.Pending = false;
 
             return new ProofOutcome(anchorsCurrent, anchorsProposedHeir, anchorsTwoKeys, anchorsUnderAnotherHandle, anchorsAStranger, anchorsEmpty, anchorsPending,
-                valid, replayRefused, heirRefused, bobRefused, untaggedRefused, otherHandleRefused, garbageMessageClean);
+                valid, replayRefused, heirRefused, bobRefused, untaggedRefused, otherHandleRefused, otherIdRefused, garbageMessageClean);
         })
         .TheTest
         .ShouldPass<ProofOutcome>((because, outcome) =>
@@ -298,6 +301,7 @@ public class KeySetHandoverShould : UnitTestMenuContainer
             because.ItsTrue("another person's passkey can't prove it", outcome.BobRefused);
             because.ItsTrue("an assertion over the untagged payload is refused", outcome.UntaggedRefused);
             because.ItsTrue("a rotation onto another handle is refused", outcome.OtherHandleRefused);
+            because.ItsTrue("an assertion naming another passkey is refused", outcome.OtherIdRefused);
             because.ItsTrue("a failure message carries no proof bytes or credential id", outcome.GarbageMessageClean);
         })
         .SoBeHappy()
@@ -319,5 +323,5 @@ public class KeySetHandoverShould : UnitTestMenuContainer
 
     private sealed record ProofOutcome(bool AnchorsCurrent, bool AnchorsProposedHeir, bool AnchorsTwoKeys, bool AnchorsUnderAnotherHandle, bool AnchorsAStranger,
         bool AnchorsEmpty, bool AnchorsPending, bool Valid, bool ReplayRefused, bool HeirRefused, bool BobRefused, bool UntaggedRefused, bool OtherHandleRefused,
-        bool GarbageMessageClean);
+        bool OtherIdRefused, bool GarbageMessageClean);
 }

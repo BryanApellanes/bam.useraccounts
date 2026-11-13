@@ -44,6 +44,23 @@ public sealed class AssertionCompleteRequest
     public string? ReturnUrl { get; set; }
 }
 
+/// <summary>Body of <c>passkeys/{id}/handover/begin</c> (bam.useraccounts#20).</summary>
+public sealed class HandoverBeginRequest
+{
+    /// <summary>The passkey to move the key set to, or null for the passkey this session signed in with.</summary>
+    public string? Heir { get; set; }
+}
+
+/// <summary>Body of <c>passkeys/{id}/handover/complete</c>.</summary>
+public sealed class HandoverCompleteRequest
+{
+    /// <summary>The <c>handoverId</c> returned by <c>handover/begin</c>.</summary>
+    public string? HandoverId { get; set; }
+
+    /// <summary><c>PublicKeyCredential.toJSON()</c> of the assertion the passkey being removed made.</summary>
+    public PasskeyAssertionResponse? Credential { get; set; }
+}
+
 /// <summary>Body of <c>additional/complete</c>.</summary>
 public sealed class AdditionalCompleteRequest
 {
@@ -131,6 +148,33 @@ public static class AccountErrorCodes
 
     /// <summary>The profile couldn't be saved; try again later.</summary>
     public const string ProfileNotSaved = "ProfileNotSaved";
+
+    /// <summary>The passkey holds the account's key set: hand it over first, or remove it with <c>?keySet=keep</c>.</summary>
+    public const string KeySetHandoverRequired = "KeySetHandoverRequired";
+
+    /// <summary>A handover was asked for the person's only passkey.</summary>
+    public const string LastCredential = "LastCredential";
+
+    /// <summary>The heir isn't another registered passkey of this person.</summary>
+    public const string InvalidHeir = "InvalidHeir";
+
+    /// <summary>The passkey doesn't hold the key set; remove it with a plain <c>DELETE</c>.</summary>
+    public const string NotKeySet = "NotKeySet";
+
+    /// <summary>This host can't move a key set between passkeys; <c>DELETE ?keySet=keep</c> removes it.</summary>
+    public const string RotationUnavailable = "RotationUnavailable";
+
+    /// <summary>The <c>handoverId</c> is unknown, used or expired.</summary>
+    public const string HandoverExpired = "HandoverExpired";
+
+    /// <summary>The assertion didn't prove the move.</summary>
+    public const string ProofRefused = "ProofRefused";
+
+    /// <summary>The key set moved, or the passkey was removed, since the handover began.</summary>
+    public const string KeySetChanged = "KeySetChanged";
+
+    /// <summary>The heir was removed since the handover began.</summary>
+    public const string HeirGone = "HeirGone";
 }
 
 /// <summary>Response of <c>registration/begin</c> and <c>additional/begin</c>.</summary>
@@ -164,6 +208,16 @@ public sealed class SignedInResponse
 
     /// <summary>False when sign-up claimed the handle but the profile could not be written; true otherwise.</summary>
     public bool ProfileCreated { get; set; } = true;
+}
+
+/// <summary>Response of <c>passkeys/{id}/handover/begin</c>.</summary>
+public sealed class HandoverBeginResponse
+{
+    /// <summary>Send back to <c>handover/complete</c>; works once, for as long as a ceremony does.</summary>
+    public string HandoverId { get; set; } = string.Empty;
+
+    /// <summary>Assertion options that allow only the passkey being removed.</summary>
+    public PasskeyRequestOptions Options { get; set; } = null!;
 }
 
 /// <summary>Response of <c>additional/complete</c>.</summary>

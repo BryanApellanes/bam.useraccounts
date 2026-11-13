@@ -206,9 +206,74 @@ export function rename(credentialId, name) {
     return call("POST", "/passkeys/" + encodeURIComponent(credentialId) + "/name", { name: name || null });
 }
 
-/** Removes one of the signed-in person's passkeys. Resolves to { signedOut, nextUrl }. */
-export function remove(credentialId) {
-    return call("DELETE", "/passkeys/" + encodeURIComponent(credentialId));
+/**
+ * Removes one of the signed-in person's passkeys. Resolves to { signedOut, nextUrl }. A passkey
+ * that holds the account's key set is refused with code KeySetHandoverRequired: hand it over with
+ * handOver, or pass keepKeySet to remove it and leave the key set where it is.
+ */
+export function remove(credentialId, keepKeySet) {
+    return call("DELETE", "/passkeys/" + encodeURIComponent(credentialId) + (keepKeySet ? "?keySet=keep" : ""));
+}
+
+/**
+ * Moves the key set from the passkey being removed to another of the person's passkeys (the one
+ * this session signed in with unless heir is given), then removes it. The browser asks for the
+ * passkey being removed. Resolves to { signedOut, nextUrl }.
+ */
+export async function handOver(credentialId, heir) {
+    requireSupport();
+    const path = "/passkeys/" + encodeURIComponent(credentialId) + "/handover";
+    const begun = await call("POST", path + "/begin", { heir: heir || null });
+    const credential = await prompt(() => navigator.credentials.get({ publicKey: requestOptions(begun.options) }));
+    return call("POST", path + "/complete", { handoverId: begun.handoverId, credential: credentialToJson(credential) });
+}
+
+// The other passkeys listed in this shell, as heir candidates. The server checks the heir is the
+// person's own registered passkey, so a listed id can't move the key set anywhere else.
+function otherPasskeys(shell, credentialId) {
+    const ids = [];
+    for (const element of shell.querySelectorAll("[data-account-credential]")) {
+        const id = element.dataset.accountCredential;
+        if (element.dataset.accountAction === "remove" && id && id !== credentialId && !ids.includes(id)) {
+            ids.push(id);
+        }
+    }
+    return ids;
+}
+
+// Removes a passkey, asking to move the key set first when it holds it.
+async function removeOrHandOver(credentialId, shell) {
+    try {
+        return await remove(credentialId);
+    } catch (error) {
+        if (!(error instanceof AccountError) || error.code !== "KeySetHandoverRequired") {
+            throw error;
+        }
+    }
+    if (window.confirm(message("keySetHandoverPrompt", "This passkey holds your account's key. Move it first?"))) {
+        try {
+            try {
+                return await handOver(credentialId);
+            } catch (error) {
+                // This session signed in with the passkey being removed: hand the key set to another one.
+                const heir = error instanceof AccountError && error.code === "InvalidHeir" ? otherPasskeys(shell, credentialId)[0] : undefined;
+                if (!heir) {
+                    throw error;
+                }
+                return await handOver(credentialId, heir);
+            }
+        } catch (error) {
+            // The key can't be moved from here (no other passkey to take it, or this host can't
+            // move it): fall through to removing it without the move. Anything else is a failure.
+            if (!(error instanceof AccountError) || (error.code !== "InvalidHeir" && error.code !== "RotationUnavailable")) {
+                throw error;
+            }
+        }
+    }
+    if (!window.confirm(message("keySetKeepConfirmation", "Remove this passkey anyway?"))) {
+        return null;
+    }
+    return remove(credentialId, true);
 }
 
 /** Ends the session. Resolves to { signedOut, nextUrl }. */
@@ -273,12 +338,15 @@ const actions = {
         await rename(button.dataset.accountCredential, fields(shell, button.dataset.accountForm).name);
         location.reload();
     },
-    async remove(button) {
+    async remove(button, shell) {
         if (!window.confirm(message("removeConfirmation", "Remove this passkey?"))) {
             return;
         }
-        const done = await remove(button.dataset.accountCredential);
-        if (done && done.signedOut) {
+        const done = await removeOrHandOver(button.dataset.accountCredential, shell);
+        if (!done) {
+            return;
+        }
+        if (done.signedOut) {
             go(done.nextUrl, signedOutUrl);
         } else {
             location.reload();

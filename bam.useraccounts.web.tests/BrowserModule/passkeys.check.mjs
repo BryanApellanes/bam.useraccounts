@@ -64,6 +64,10 @@ class Element {
         }
         return null;
     }
+
+    querySelectorAll(selector) {
+        return all(this, selector, []);
+    }
 }
 
 let root = new Element();
@@ -72,6 +76,9 @@ let fetched = [];
 let assigned = [];
 let confirmed = 0;
 let nextReply = {};
+// Scripted replies ({ status, body }) and confirm answers, taken in order; past them, 200 nextReply and OK.
+let queue = [];
+let answers = [];
 
 function all(node, selector, found) {
     for (const child of node.children) {
@@ -93,7 +100,7 @@ globalThis.document = {
         return search(root);
     }
 };
-globalThis.window = { confirm: () => { confirmed++; return true; }, PublicKeyCredential: {} };
+globalThis.window = { confirm: () => { confirmed++; return answers.length > 0 ? answers.shift() : true; }, PublicKeyCredential: {} };
 globalThis.PublicKeyCredential = { parseCreationOptionsFromJSON: json => json, parseRequestOptionsFromJSON: json => json };
 // Node has its own navigator, read-only; replace it.
 Object.defineProperty(globalThis, "navigator", {
@@ -104,7 +111,8 @@ Object.defineProperty(globalThis, "navigator", {
 globalThis.FormData = class { constructor(form) { this.values = form.values || []; } entries() { return this.values; } };
 globalThis.fetch = async (url, init) => {
     fetched.push({ url, method: init.method, header: init.headers["X-Bam-Account"], body: init.body ? JSON.parse(init.body) : null });
-    return { ok: true, status: 200, headers: { get: () => "application/json" }, json: async () => nextReply };
+    const next = queue.length > 0 ? queue.shift() : { status: 200, body: nextReply };
+    return { ok: next.status < 300, status: next.status, headers: { get: () => "application/json" }, json: async () => next.body };
 };
 globalThis.location = { pathname: "/account", assign: url => assigned.push(url), reload: () => assigned.push("(reload)") };
 
@@ -123,11 +131,13 @@ function at(path) {
     location.pathname = path;
 }
 
-async function click(element, reply) {
+async function click(element, reply, replies = [], confirms = []) {
     fetched = [];
     assigned = [];
     confirmed = 0;
     nextReply = reply;
+    queue = replies.slice();
+    answers = confirms.slice();
     listeners.click({ target: element, preventDefault() {} });
     await new Promise(resolve => setTimeout(resolve, 20));
 }
@@ -225,6 +235,40 @@ await click(new Element({ dataset: { accountAction: "signin", accountForm: "acco
 expect("sign-in begins with the typed handle", fetched.length === 2 && fetched[0].url === "/account/passkey/assertion/begin" && fetched[0].body.handle === "jane-doe", fetched);
 expect("and completes with the ceremony and the return URL",
     fetched.length === 2 && fetched[1].body.ceremonyId === "c-1" && fetched[1].body.returnUrl === "/orders" && assigned[0] === "/orders", { fetched, assigned });
+
+// Removing the passkey that holds the key set (bam.useraccounts#20): the server asks for a
+// handover, the module moves the key set with the passkey's assertion, then reloads.
+const handoverRequired = { status: 409, body: { error: "KeySetHandoverRequired", message: "holds the key" } };
+const begun = { status: 200, body: { handoverId: "h-1", options: {} } };
+at("/account");
+const keyPage = shell();
+const keyHolder = new Element({ dataset: { accountAction: "remove", accountCredential: "cred-1" }, parent: keyPage });
+new Element({ dataset: { accountAction: "remove", accountCredential: "cred-2" }, parent: keyPage });
+await click(keyHolder, {}, [handoverRequired, begun, { status: 200, body: { signedOut: false } }]);
+expect("a key-set removal hands over with the session's passkey as heir",
+    fetched.length === 3 && fetched[0].method === "DELETE" && fetched[0].url === "/account/passkeys/cred-1"
+    && fetched[1].url === "/account/passkeys/cred-1/handover/begin" && fetched[1].body.heir === null
+    && fetched[2].url === "/account/passkeys/cred-1/handover/complete" && fetched[2].body.handoverId === "h-1" && fetched[2].body.credential.id === "cred-1"
+    && confirmed === 2 && assigned[0] === "(reload)", { fetched, confirmed, assigned });
+
+await click(keyHolder, {}, [handoverRequired, { status: 400, body: { error: "InvalidHeir", message: "no" } }, begun, { status: 200, body: { signedOut: true, nextUrl: "/account/signedout" } }]);
+expect("when the session signed in with it, another listed passkey takes the key set",
+    fetched.length === 4 && fetched[2].url === "/account/passkeys/cred-1/handover/begin" && fetched[2].body.heir === "cred-2" && assigned[0] === "/account/signedout", { fetched, assigned });
+
+await click(keyHolder, {}, [handoverRequired, { status: 200, body: { signedOut: false } }], [true, false, true]);
+expect("declining the handover asks again and removes it keeping the key set",
+    fetched.length === 2 && fetched[1].method === "DELETE" && fetched[1].url === "/account/passkeys/cred-1?keySet=keep" && confirmed === 3, { fetched, confirmed });
+
+await click(keyHolder, {}, [handoverRequired], [true, false, false]);
+expect("declining both leaves the passkey", fetched.length === 1 && assigned.length === 0, { fetched, assigned });
+
+await click(keyHolder, {}, [handoverRequired, { status: 409, body: { error: "RotationUnavailable", message: "no" } }, { status: 200, body: { signedOut: false } }]);
+expect("a host that can't move the key set falls back to removing it keeping the key set",
+    fetched.length === 3 && fetched[2].url === "/account/passkeys/cred-1?keySet=keep", fetched);
+
+await click(keyHolder, {}, [handoverRequired, begun, { status: 400, body: { error: "ProofRefused", message: "The key didn't move" } }]);
+expect("a refused handover removes nothing and says so",
+    fetched.length === 3 && !fetched.some(call => call.url.includes("keySet=keep")) && assigned.length === 0, { fetched, assigned });
 
 expect("the module exports isLocalPath", typeof module.isLocalPath === "function", Object.keys(module));
 for (const [url, local] of typeof module.isLocalPath !== "function" ? [] : [["/account", true], ["/", true], ["//x", false], ["/\\x", false], ["http://x", false], ["/a\tb", false], ["/a\u0085b", false]]) {

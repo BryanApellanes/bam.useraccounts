@@ -66,6 +66,7 @@ public static class AccountWebRegistration
         services.AddTransient<IPasskeySignUp>(_ => registry.Get<IPasskeySignUp>());
         services.AddTransient<IPasskeyCeremony>(_ => registry.Get<IPasskeyCeremony>());
         services.AddTransient<IPasskeyInventory>(_ => registry.Get<IPasskeyInventory>());
+        services.AddTransient<IKeySetHandover>(_ => registry.Get<IKeySetHandover>());
         services.AddTransient<IPasskeyCredentialRepository>(_ => registry.Get<IPasskeyCredentialRepository>());
         services.AddScoped<AccountSession>();
 
@@ -120,6 +121,7 @@ public static class AccountWebRegistration
             RequireResolvable<IPasskeyCeremony>(registry, problems);
             RequireResolvable<IPasskeySignUp>(registry, problems);
             RequireResolvable<IPasskeyInventory>(registry, problems);
+            RequireResolvable<IKeySetHandover>(registry, problems);
         }
         if (problems.Count > 0)
         {

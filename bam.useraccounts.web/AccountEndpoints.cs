@@ -51,6 +51,8 @@ public static class AccountEndpoints
         group.MapGet("/passkeys", ListPasskeys).RequireAuthorization(AccountWebRegistration.Policy);
         group.MapPost("/passkeys/{credentialId}/name", RenameAsync).RequireAuthorization(AccountWebRegistration.Policy);
         group.MapDelete("/passkeys/{credentialId}", RemoveAsync).RequireAuthorization(AccountWebRegistration.Policy);
+        group.MapPost("/passkeys/{credentialId}/handover/begin", BeginHandoverAsync).RequireAuthorization(AccountWebRegistration.Policy).RequireRateLimiting(AccountRateLimitOptions.AnonymousPolicy);
+        group.MapPost("/passkeys/{credentialId}/handover/complete", CompleteHandoverAsync).RequireAuthorization(AccountWebRegistration.Policy).RequireRateLimiting(AccountRateLimitOptions.AnonymousPolicy);
         group.MapPost("/profile", CompleteProfileAsync).RequireAuthorization(AccountWebRegistration.Policy);
         return group;
     }
@@ -271,21 +273,86 @@ public static class AccountEndpoints
     private static async Task<IResult> RemoveAsync(string credentialId, HttpContext context, IPasskeyInventory inventory, AccountSession session, AccountSiteOptions site)
     {
         string handle = AccountPrincipal.Handle(context.User)!;
-        PasskeyRemoval removal = inventory.Remove(handle, credentialId);
+        // ?keySet=keep removes the key-set passkey without moving the key set (option A), so a lost
+        // key-set device can always be removed (bam.useraccounts#20). Ignored where it changes nothing.
+        bool keepKeySet = string.Equals(context.Request.Query["keySet"], "keep", StringComparison.Ordinal);
+        PasskeyRemoval removal = inventory.Remove(handle, credentialId, keepKeySet);
         if (removal == PasskeyRemoval.LastCredential)
         {
             return Refusal(StatusCodes.Status409Conflict, AccountErrorCodes.LastPasskey, site.Strings.LastPasskeyMessage);
+        }
+        if (removal == PasskeyRemoval.KeySetHandoverRequired)
+        {
+            return Refusal(StatusCodes.Status409Conflict, AccountErrorCodes.KeySetHandoverRequired, site.Strings.KeySetHandoverPrompt);
         }
         if (removal != PasskeyRemoval.Removed)
         {
             return Refusal(StatusCodes.Status404NotFound, AccountErrorCodes.NotFound, site.Strings.ActionFailedMessage);
         }
-        bool wasCurrent = string.Equals(AccountPrincipal.CredentialId(context.User), credentialId, StringComparison.Ordinal);
+        return await RemovedAsync(context, session, site, credentialId);
+    }
+
+    private static async Task<IResult> BeginHandoverAsync(string credentialId, HttpContext context, IKeySetHandover handover, AccountSiteOptions site)
+    {
+        HandoverBeginRequest? body = await ReadAsync<HandoverBeginRequest>(context.Request);
+        if (body is null)
+        {
+            return BadRequest(site);
+        }
+        string handle = AccountPrincipal.Handle(context.User)!;
+        KeySetHandoverStart start = handover.Begin(handle, credentialId, string.IsNullOrWhiteSpace(body.Heir) ? null : body.Heir, AccountPrincipal.CredentialId(context.User));
+        if (!start.Success || start.Options is null || start.HandoverId is null)
+        {
+            return HandoverRefused(start.Refusal, site);
+        }
+        return Json(new HandoverBeginResponse { HandoverId = start.HandoverId, Options = start.Options });
+    }
+
+    private static async Task<IResult> CompleteHandoverAsync(string credentialId, HttpContext context, IKeySetHandover handover, AccountSession session, AccountSiteOptions site)
+    {
+        HandoverCompleteRequest? body = await ReadAsync<HandoverCompleteRequest>(context.Request);
+        if (body is null || body.Credential is null || string.IsNullOrEmpty(body.HandoverId))
+        {
+            return BadRequest(site);
+        }
+        // The handoverId names the passkey being removed; {credentialId} in the route is only its address.
+        string handle = AccountPrincipal.Handle(context.User)!;
+        byte[] assertionJson = System.Text.Encoding.UTF8.GetBytes(PasskeyJson.Serialize(body.Credential));
+        KeySetHandoverResult result = handover.Complete(handle, body.HandoverId, assertionJson);
+        if (!result.Success)
+        {
+            return HandoverRefused(result.Refusal, site);
+        }
+        Log.Info("Key set of {0} handed over from passkey {1} to {2}", handle, result.RemovedCredentialId ?? string.Empty, result.HeirCredentialId ?? string.Empty);
+        return await RemovedAsync(context, session, site, result.RemovedCredentialId ?? credentialId);
+    }
+
+    // The body DELETE and handover/complete both return: a session signed in with the removed passkey ends.
+    private static async Task<IResult> RemovedAsync(HttpContext context, AccountSession session, AccountSiteOptions site, string removedCredentialId)
+    {
+        bool wasCurrent = string.Equals(AccountPrincipal.CredentialId(context.User), removedCredentialId, StringComparison.Ordinal);
         if (wasCurrent)
         {
             await session.SignOutAsync(context);
         }
         return Json(new SignedOutResponse { SignedOut = wasCurrent, NextUrl = wasCurrent ? site.SignedOutUrl : null });
+    }
+
+    private static IResult HandoverRefused(KeySetHandoverRefusal refusal, AccountSiteOptions site)
+    {
+        AccountStrings strings = site.Strings;
+        return refusal switch
+        {
+            KeySetHandoverRefusal.NotFound => Refusal(StatusCodes.Status404NotFound, AccountErrorCodes.NotFound, strings.ActionFailedMessage),
+            KeySetHandoverRefusal.LastCredential => Refusal(StatusCodes.Status409Conflict, AccountErrorCodes.LastCredential, strings.LastPasskeyMessage),
+            KeySetHandoverRefusal.InvalidHeir => Refusal(StatusCodes.Status400BadRequest, AccountErrorCodes.InvalidHeir, strings.ActionFailedMessage),
+            KeySetHandoverRefusal.NotKeySet => Refusal(StatusCodes.Status400BadRequest, AccountErrorCodes.NotKeySet, strings.ActionFailedMessage),
+            KeySetHandoverRefusal.RotationUnavailable => Refusal(StatusCodes.Status409Conflict, AccountErrorCodes.RotationUnavailable, strings.KeySetKeepConfirmation),
+            KeySetHandoverRefusal.HandoverExpired => Refusal(StatusCodes.Status400BadRequest, AccountErrorCodes.HandoverExpired, strings.HandoverFailedMessage),
+            KeySetHandoverRefusal.KeySetChanged => Refusal(StatusCodes.Status409Conflict, AccountErrorCodes.KeySetChanged, strings.HandoverFailedMessage),
+            KeySetHandoverRefusal.HeirGone => Refusal(StatusCodes.Status409Conflict, AccountErrorCodes.HeirGone, strings.HandoverFailedMessage),
+            _ => Refusal(StatusCodes.Status400BadRequest, AccountErrorCodes.ProofRefused, strings.HandoverFailedMessage)
+        };
     }
 
     private static IResult SignUpRefused(SignUpRefusal refusal, AccountSiteOptions site)

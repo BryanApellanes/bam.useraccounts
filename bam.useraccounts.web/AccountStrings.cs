@@ -107,6 +107,15 @@ public sealed class AccountStrings
     /// <summary>Shown when the person tries to remove their only passkey.</summary>
     public string LastPasskeyMessage { get; set; } = "This is your only passkey. Add another before removing it.";
 
+    /// <summary>Asked when the passkey being removed holds the account's key (bam.useraccounts#20).</summary>
+    public string KeySetHandoverPrompt { get; set; } = "This passkey holds your account's key. Confirm with it once to move the key to another of your passkeys, then it's removed.";
+
+    /// <summary>Asked when the key can't be moved first: the passkey is removed and the key stays with it.</summary>
+    public string KeySetKeepConfirmation { get; set; } = "This passkey holds your account's key, and moving it needs that passkey. Remove it anyway? The key stays on record until you replace it.";
+
+    /// <summary>Shown when moving the key didn't go through.</summary>
+    public string HandoverFailedMessage { get; set; } = "The key didn't move and nothing was removed. Reload the page and try again.";
+
     /// <summary>Shown while a ceremony is running.</summary>
     public string WorkingMessage { get; set; } = "Waiting for your passkey...";
 

@@ -106,7 +106,8 @@ public sealed class HandoverFixture
         }
     }
 
-    private static ObjectDataRepository CreateObjectDataRepository(string testName)
+    /// <summary>A fresh encrypted object store under <c>./.bam/tests/{testName}</c>.</summary>
+    public static ObjectDataRepository CreateObjectDataRepository(string testName)
     {
         string rootPath = $"./.bam/tests/{testName}";
         if (Directory.Exists(rootPath))
