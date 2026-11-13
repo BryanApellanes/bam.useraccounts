@@ -227,6 +227,28 @@ PasskeySignUpResult done = signUp.Complete(request, response);     // the same r
 
 `bam.useraccounts.web` is the Blazor shell over these: branded pages, JSON endpoints, a session cookie and the browser module. See [bam.useraccounts.web/README.md](bam.useraccounts.web/README.md).
 
+### Moving the key set to another passkey
+
+A person's first passkey is also their registered key set. Removing it would leave the key trusted in `bam.protocol`, so `IKeySetHandover` moves the key set to a passkey they keep first, then removes the old one. The old passkey signs the rotation once, and its key is blocklisted under every handle.
+
+```csharp
+PasskeyRemoval removal = inventory.Remove("person-handle", credentialId);
+if (removal == PasskeyRemoval.KeySetHandoverRequired)
+{
+    IKeySetHandover handover = registry.Get<IKeySetHandover>();
+    // heir: the passkey to move to, or null for the session's own passkey. Anything else is InvalidHeir.
+    KeySetHandoverStart start = handover.Begin("person-handle", credentialId, heirCredentialId, sessionCredentialId);
+    // ... browser runs navigator.credentials.get({ publicKey: start.Options }) with the OLD passkey ...
+    KeySetHandoverResult done = handover.Complete("person-handle", start.HandoverId!, assertionJsonBytes);
+}
+```
+
+- The handover is available only when `PasskeyKeySetRotationProof` is in the host's `KeySetRotationProofs` (bam.protocol#72). `AddPasskeys` adds it when the proof list is already registered, which the profile repository registration does. A host that registers the profile repository after `AddPasskeys` calls `registry.AddPasskeyKeySetRotation()` afterwards.
+- Without it, `Remove` behaves as before: the passkey goes and its key stays registered until revoked (`IsAvailable` is false, `Begin` refuses with `RotationUnavailable`). `Remove(handle, id, keepKeySet: true)` does that on purpose.
+- The proof anchors only a key set that is exactly one accepted passkey's key under that handle, and verifies an assertion by that passkey over SHA-256 of the tagged rotation payload (`PasskeyKeySetRotationProof.Challenge`). Its failure messages carry no assertion bytes or credential ids.
+- The challenge is single-use. A refused, expired or abandoned handover changes nothing: both passkeys and the key set stay as they were. If the key set moved or the heir went away in between, `Complete` refuses with `KeySetChanged` or `HeirGone`.
+- Recovery when the key-set passkey is lost is bam.protocol#85; it isn't built yet.
+
 ## Known Gaps / Not Yet Implemented
 
 - **`IAuthenticator` interface** -- Contains a `TODO: redesign this concept to align with modern authentication concepts` comment, suggesting a future move toward challenge-based authentication.

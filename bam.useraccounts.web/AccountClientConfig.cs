@@ -31,6 +31,9 @@ public sealed class AccountClientConfig
         config.Messages["actionFailed"] = strings.ActionFailedMessage;
         config.Messages["working"] = strings.WorkingMessage;
         config.Messages["removeConfirmation"] = strings.RemoveConfirmation;
+        config.Messages["keySetHandoverPrompt"] = strings.KeySetHandoverPrompt;
+        config.Messages["keySetKeepConfirmation"] = strings.KeySetKeepConfirmation;
+        config.Messages["handoverFailed"] = strings.HandoverFailedMessage;
         config.Messages["handleTaken"] = strings.HandleTakenMessage;
         config.Messages["handleInvalid"] = strings.HandleInvalidMessage;
         config.Messages["handleAvailable"] = strings.HandleAvailableMessage;

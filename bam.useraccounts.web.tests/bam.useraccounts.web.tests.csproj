@@ -20,6 +20,8 @@
     <ProjectReference Include="$(BamFrameworkRoot)bam.encryption\bam.encryption\bam.encryption.csproj" />
     <ProjectReference Include="$(BamFrameworkRoot)bam.protocol\bam.protocol.data\bam.protocol.data.csproj" />
     <ProjectReference Include="$(BamFrameworkRoot)bam.protocol\bam.protocol.profile\bam.protocol.profile.csproj" />
+    <ProjectReference Include="$(BamFrameworkRoot)bam.data.objects\bam.data.objects\bam.data.objects.csproj" />
+    <ProjectReference Include="$(BamFrameworkRoot)bam.storage\bam.storage\bam.storage.csproj" />
     <ProjectReference Include="..\bam.useraccounts\bam.useraccounts.csproj" />
     <ProjectReference Include="..\bam.useraccounts.web\bam.useraccounts.web.csproj" />
   </ItemGroup>
@@ -29,6 +31,7 @@
     <Compile Include="..\bam.useraccounts.tests\TestClasses\SyntheticAuthenticator.cs" Link="TestClasses\Shared\SyntheticAuthenticator.cs" />
     <Compile Include="..\bam.useraccounts.tests\TestClasses\PasskeyFixture.cs" Link="TestClasses\Shared\PasskeyFixture.cs" />
     <Compile Include="..\bam.useraccounts.tests\TestClasses\SignUpFixture.cs" Link="TestClasses\Shared\SignUpFixture.cs" />
+    <Compile Include="..\bam.useraccounts.tests\TestClasses\HandoverFixture.cs" Link="TestClasses\Shared\HandoverFixture.cs" />
   </ItemGroup>
 
   <ItemGroup>

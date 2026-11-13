@@ -296,15 +296,7 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
         bool keySetRegistered = false;
         if (first)
         {
-            PublicKeySetData keySet = new PublicKeySetData { KeySetHandle = personHandle };
-            if (CoseAlgorithms.KeyType(credential.Algorithm) == CoseAlgorithms.KeyTypeRsa)
-            {
-                keySet.PublicRsaKey = pem;
-            }
-            else
-            {
-                keySet.PublicEccKey = pem;
-            }
+            PublicKeySetData keySet = PasskeyKeySet.From(personHandle, credential.Algorithm, pem);
             try
             {
                 _registrar.Register(keySet);
@@ -487,15 +479,7 @@ public sealed class PasskeyCeremony : IPasskeyCeremony
         {
             return false;
         }
-        PublicKeySetData? keySet = _registrar.Resolve(row.PersonHandle);
-        string? rowKey = PublicKeyFingerprint.Of(row.PublicKeyPem);
-        if (keySet is null || rowKey is null)
-        {
-            return false;
-        }
-        string? registeredRsa = string.IsNullOrEmpty(keySet.PublicRsaKey) ? null : PublicKeyFingerprint.Of(keySet.PublicRsaKey);
-        string? registeredEcc = string.IsNullOrEmpty(keySet.PublicEccKey) ? null : PublicKeyFingerprint.Of(keySet.PublicEccKey);
-        return string.Equals(rowKey, registeredRsa, StringComparison.Ordinal) || string.Equals(rowKey, registeredEcc, StringComparison.Ordinal);
+        return PasskeyKeySet.Contains(_registrar.Resolve(row.PersonHandle), row);
     }
 
     private static bool TryReadBinding(byte[]? binding, out string? boundHandle)

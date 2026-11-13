@@ -107,6 +107,24 @@ public sealed class AccountStrings
     /// <summary>Shown when the person tries to remove their only passkey.</summary>
     public string LastPasskeyMessage { get; set; } = "This is your only passkey. Add another before removing it.";
 
+    /// <summary>Asked when the passkey being removed holds the account's key (bam.useraccounts#20).</summary>
+    public string KeySetHandoverPrompt { get; set; } = "This passkey holds your account's key. Confirm with it once to move the key to another of your passkeys, then it's removed.";
+
+    /// <summary>Asked when the key can't be moved first: the passkey is removed and the key stays with it.</summary>
+    public string KeySetKeepConfirmation { get; set; } = "This passkey holds your account's key, and moving the key needs this passkey. Remove it anyway? You can't sign in with it after that, but its key still counts as your account key until it is replaced, and you can't replace it here yet.";
+
+    /// <summary>The badge on the passkey that holds the account's key.</summary>
+    public string KeySetBadge { get; set; } = "Account key";
+
+    /// <summary>Under the key-set passkey when removing it moves the key first.</summary>
+    public string KeySetMovesNote { get; set; } = "Removing it moves the key to another of your passkeys first.";
+
+    /// <summary>Under the key-set passkey when the key can't be moved: removing it leaves the key on record.</summary>
+    public string KeySetStaysNote { get; set; } = "Removing it doesn't move the key. You can't sign in with it after that, but its key still counts as your account key until it is replaced, and you can't replace it here yet.";
+
+    /// <summary>Shown when moving the key didn't go through.</summary>
+    public string HandoverFailedMessage { get; set; } = "The key didn't move and nothing was removed. Reload the page and try again.";
+
     /// <summary>Shown while a ceremony is running.</summary>
     public string WorkingMessage { get; set; } = "Waiting for your passkey...";
 

@@ -27,7 +27,7 @@ public sealed class AccountHost : IDisposable
     private readonly HttpClient _client;
     private volatile CountingReadStream? _lastBody;
 
-    public AccountHost(Action<AccountSiteOptions>? configure = null)
+    public AccountHost(Action<AccountSiteOptions>? configure = null, Action<ServiceRegistry>? bind = null)
     {
         Fixture = new SignUpFixture();
         Site = new AccountSiteOptions { ProductName = "Lumberjack" };
@@ -36,6 +36,8 @@ public sealed class AccountHost : IDisposable
         Site.Cookie.RevalidateEvery = TimeSpan.Zero;
         configure?.Invoke(Site);
         Registry = BindHostServices(new ServiceRegistry(), Fixture);
+        // A test's own bindings (a real registrar, the rotation proofs) replace the fixture's.
+        bind?.Invoke(Registry);
 
         WebApplicationBuilder builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = Environments.Development });
         builder.Logging.ClearProviders();

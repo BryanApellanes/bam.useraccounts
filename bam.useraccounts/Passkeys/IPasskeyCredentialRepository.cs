@@ -53,6 +53,18 @@ public interface IPasskeyCredentialRepository
     bool SetName(string personHandle, string credentialId, string? name);
 
     /// <summary>
+    /// Records whether one person's credential is their registered key set in <c>bam.protocol</c>
+    /// (<see cref="PasskeyCredentialData.IsRegisteredKeySet"/>).  Set on the heir when a key-set
+    /// handover moves the key set to it (bam.useraccounts#20).  The row is addressed by person and
+    /// credential id together; a credential with that id belonging to someone else is left alone.
+    /// </summary>
+    /// <param name="personHandle">The person the credential belongs to.</param>
+    /// <param name="credentialId">The credential id, base64url.</param>
+    /// <param name="isRegisteredKeySet">Whether it is now the key set.</param>
+    /// <returns>Whether that person has a credential with that id and it was updated.</returns>
+    bool SetRegisteredKeySet(string personHandle, string credentialId, bool isRegisteredKeySet);
+
+    /// <summary>
     /// Removes one person's credential.  The row is addressed by person and credential id
     /// together; a credential with that id belonging to someone else is left alone.
     /// </summary>

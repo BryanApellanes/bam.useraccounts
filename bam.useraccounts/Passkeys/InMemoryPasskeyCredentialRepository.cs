@@ -112,6 +112,21 @@ public sealed class InMemoryPasskeyCredentialRepository : IPasskeyCredentialRepo
     }
 
     /// <inheritdoc />
+    public bool SetRegisteredKeySet(string personHandle, string credentialId, bool isRegisteredKeySet)
+    {
+        lock (_lock)
+        {
+            if (!_byCredentialId.TryGetValue(credentialId, out PasskeyCredentialData? credential)
+                || !string.Equals(credential.PersonHandle, personHandle, StringComparison.Ordinal))
+            {
+                return false;
+            }
+            credential.IsRegisteredKeySet = isRegisteredKeySet;
+            return true;
+        }
+    }
+
+    /// <inheritdoc />
     public bool Remove(string personHandle, string credentialId)
     {
         lock (_lock)

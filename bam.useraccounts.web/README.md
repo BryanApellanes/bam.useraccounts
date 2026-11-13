@@ -113,7 +113,9 @@ All under `/account`, JSON in and out, camelCase. The types are in `AccountWire.
 | `POST /passkey/additional/complete` | `{ credential, name? }` | `{ credentialId }`. Session required |
 | `GET /passkeys` | | `{ passkeys: [{ id, name, createdUtc, lastUsedUtc, current, registeredKeySet }] }`. Session required |
 | `POST /passkeys/{id}/name` | `{ name }` | 204. Session required |
-| `DELETE /passkeys/{id}` | | `{ signedOut, nextUrl }`. Session required |
+| `DELETE /passkeys/{id}` | | `{ signedOut, nextUrl }`. 409 `KeySetHandoverRequired` when the passkey holds the key set and it can move; `?keySet=keep` removes it anyway and leaves the key registered. Session required |
+| `POST /passkeys/{id}/handover/begin` | `{ heir? }` | `{ handoverId, options }` for `navigator.credentials.get` with the passkey being removed. 404 `NotFound`, 409 `LastCredential`, 400 `InvalidHeir`, 400 `NotKeySet`, 409 `RotationUnavailable`. Session required |
+| `POST /passkeys/{id}/handover/complete` | `{ handoverId, credential }` | `{ signedOut, nextUrl }`: the key set has moved and the passkey is removed. 400 `HandoverExpired`, 400 `ProofRefused`, 409 `KeySetChanged`, 409 `HeirGone`. Session required |
 | `POST /profile` | `{ displayName, email? }` | 204 when saved or already there. 400 `EmailRequired` when the host requires an email and none (or an implausible one) is sent. 409 `ProfileNotSaved` when the store refuses or the session's handle has no passkey. 401 without a session. Saves a profile that wasn't saved at sign-up. The session's display name updates at the next sign-in |
 | `POST /signout` | `{}` | `{ signedOut, nextUrl }` |
 | `GET /handle/{handle}/availability` | | `{ handle, available, reason }` |
@@ -154,6 +156,7 @@ rate_limit {
 ## Known states and limits
 
 - **Profile not written.** The passkey claims the handle before the profile is written. If that write fails the person is signed in anyway and `profileCreated` is false. The manage page then asks for their name and email again and saves them through `POST /profile`, under the same email rule as sign-up. Nothing is written until the person enters their details, so a host that requires email never gets a profile without one.
-- **Removing the first passkey.** A person may remove their first passkey when another remains. It stops working at once. Its key stays registered as the handle's key set in `bam.protocol` until it is revoked there.
+- **Removing the first passkey.** The first passkey is the handle's key set. When the host trusts the passkey rotation proof (see "Moving the key set to another passkey" in the repository README), removing it asks the person to confirm once with it, moves the key set to another of their passkeys, and then removes it. The browser module does this from the remove button. If the heir can't be used it tries another listed passkey, and if the key set can't move it asks before removing the passkey with `?keySet=keep`. Without the proof, or with `?keySet=keep`, the passkey stops working at once and its key stays registered in `bam.protocol` until it is revoked there.
+- **Lost key-set passkey.** Recovering the key set from a surviving passkey is bam.protocol#85, not built yet.
 - **Sign out everywhere** isn't built. Removing a passkey ends that passkey's sessions; other sessions run until they expire.
 - **Passkey prompts need a secure context**: https, or `http://localhost` in development.
