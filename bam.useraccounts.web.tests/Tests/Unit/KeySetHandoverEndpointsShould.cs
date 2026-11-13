@@ -39,6 +39,9 @@ public class KeySetHandoverEndpointsShould : UnitTestMenuContainer
                     string handle = host.Fixture.Passkeys.Credentials.FindByCredentialId(firstId)!.PersonHandle;
                     PasskeyListResponse listed = host.Get("/account/passkeys", firstSession).As<PasskeyListResponse>();
                     bool firstListedAsKeySet = listed.Passkeys.Any(passkey => passkey.Id == firstId && passkey.RegisteredKeySet);
+                    string page = host.Get("/account", firstSession).Body;
+                    bool pageSaysTheKeyMoves = page.Contains("account-keyset badge", StringComparison.Ordinal) && page.Contains("account-keyset-note text-muted small\">Removing it moves", StringComparison.Ordinal)
+                        && !page.Contains("account-keyset-note text-muted small\">Removing it doesn", StringComparison.Ordinal);
 
                     AccountReply plainDelete = host.Delete("/account/passkeys/" + firstId, firstSession);
                     AccountReply ownHeir = host.Post(HandoverPath(firstId, "begin"), new HandoverBeginRequest(), firstSession);
@@ -52,7 +55,7 @@ public class KeySetHandoverEndpointsShould : UnitTestMenuContainer
                     bool keySetIsSecond = KeySetIs(host, handle, second);
                     AccountReply firstSessionAfter = host.Get("/account/passkeys", firstSession);
 
-                    return new HandoverOutcome(firstListedAsKeySet, plainDelete, ownHeir, noHeader, begun, allowsOnlyFirst, completed, firstGone, keySetIsSecond, firstSessionAfter);
+                    return new HandoverOutcome(firstListedAsKeySet, pageSaysTheKeyMoves, plainDelete, ownHeir, noHeader, begun, allowsOnlyFirst, completed, firstGone, keySetIsSecond, firstSessionAfter);
                 }
                 finally
                 {
@@ -63,6 +66,7 @@ public class KeySetHandoverEndpointsShould : UnitTestMenuContainer
             .ShouldPass<HandoverOutcome>((because, outcome) =>
             {
                 because.ItsTrue("the list marks the passkey that holds the key set", outcome.FirstListedAsKeySet);
+                because.ItsTrue("the manage page marks it and says removing it moves the key first", outcome.PageSaysTheKeyMoves);
                 because.ItsTrue($"a plain DELETE of it asks for a handover ({outcome.PlainDelete.Status}: {outcome.PlainDelete.Body})", outcome.PlainDelete.Status == HttpStatusCode.Conflict && outcome.PlainDelete.ErrorCode == AccountErrorCodes.KeySetHandoverRequired);
                 because.ItsTrue($"the session's own passkey can't be its own heir ({outcome.OwnHeir.Status})", outcome.OwnHeir.Status == HttpStatusCode.BadRequest && outcome.OwnHeir.ErrorCode == AccountErrorCodes.InvalidHeir);
                 because.ItsTrue($"begin without the request header is refused ({outcome.NoHeader.Status})", outcome.NoHeader.Status == HttpStatusCode.Forbidden);
@@ -144,9 +148,12 @@ public class KeySetHandoverEndpointsShould : UnitTestMenuContainer
                     SyntheticAuthenticator second = new SyntheticAuthenticator();
                     string session = host.SignUp("alice", "Alice Example", first).SessionCookie!;
                     Add(host, second, session);
+                    string page = host.Get("/account", session).Body;
+                    bool pageSaysTheKeyStays = page.Contains("account-keyset badge", StringComparison.Ordinal) && page.Contains("account-keyset-note text-muted small\">Removing it doesn", StringComparison.Ordinal)
+                        && !page.Contains("account-keyset-note text-muted small\">Removing it moves", StringComparison.Ordinal);
                     AccountReply begin = host.Post(HandoverPath(first.CredentialIdBase64Url, "begin"), new HandoverBeginRequest { Heir = second.CredentialIdBase64Url }, session);
                     AccountReply removed = host.Delete("/account/passkeys/" + first.CredentialIdBase64Url, session);
-                    return new UnavailableOutcome(begin, removed);
+                    return new UnavailableOutcome(pageSaysTheKeyStays, begin, removed);
                 }
                 finally
                 {
@@ -156,6 +163,7 @@ public class KeySetHandoverEndpointsShould : UnitTestMenuContainer
             .TheTest
             .ShouldPass<UnavailableOutcome>((because, outcome) =>
             {
+                because.ItsTrue("the manage page marks the key-set passkey and says removing it leaves the key", outcome.PageSaysTheKeyStays);
                 because.ItsTrue($"begin says the key set can't move on this host ({outcome.Begin.Status}: {outcome.Begin.Body})", outcome.Begin.Status == HttpStatusCode.Conflict && outcome.Begin.ErrorCode == AccountErrorCodes.RotationUnavailable);
                 because.ItsTrue($"a plain DELETE removes the key-set passkey, as before #20 ({outcome.Removed.Status})", outcome.Removed.Status == HttpStatusCode.OK);
             })
@@ -204,10 +212,10 @@ public class KeySetHandoverEndpointsShould : UnitTestMenuContainer
         return PasskeyKeySet.IsHeldBy(keySet, new PasskeyCredentialData { PersonHandle = handle, PublicKeyPem = authenticator.PublicKeyPem });
     }
 
-    private sealed record HandoverOutcome(bool FirstListedAsKeySet, AccountReply PlainDelete, AccountReply OwnHeir, AccountReply NoHeader, AccountReply Begun, bool AllowsOnlyFirst,
+    private sealed record HandoverOutcome(bool FirstListedAsKeySet, bool PageSaysTheKeyMoves, AccountReply PlainDelete, AccountReply OwnHeir, AccountReply NoHeader, AccountReply Begun, bool AllowsOnlyFirst,
         AccountReply Completed, bool FirstGone, bool KeySetIsSecond, AccountReply FirstSessionAfter);
 
     private sealed record RefusalOutcome(AccountReply WrongPasskey, AccountReply Retried, AccountReply UnknownId, AccountReply NoCredential, bool FirstKept, bool KeySetKept, AccountReply NotKeySet, AccountReply Kept, bool RemovedWithoutMove);
 
-    private sealed record UnavailableOutcome(AccountReply Begin, AccountReply Removed);
+    private sealed record UnavailableOutcome(bool PageSaysTheKeyStays, AccountReply Begin, AccountReply Removed);
 }
