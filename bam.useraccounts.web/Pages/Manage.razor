@@ -47,7 +47,7 @@
                     {
                         <span class="account-current badge text-bg-secondary">@Site.Strings.CurrentPasskeyBadge</span>
                     }
-                    @if (passkey.IsRegisteredKeySet)
+                    @if (HoldsKeySet(passkey))
                     {
                         <span class="account-keyset badge text-bg-info">@Site.Strings.KeySetBadge</span>
                     }
@@ -57,7 +57,7 @@
                         <span>· @Site.Strings.LastUsedPrefix @Day(lastUsed)</span>
                     }
                 </span>
-                @if (passkey.IsRegisteredKeySet && _passkeys.Count > 1)
+                @if (HoldsKeySet(passkey) && _passkeys.Count > 1)
                 {
                     <span class="account-keyset-note text-muted small">@(_keySetMoves ? Site.Strings.KeySetMovesNote : Site.Strings.KeySetStaysNote)</span>
                 }
@@ -79,13 +79,14 @@
     private string? _currentCredentialId;
     private bool _profileComplete = true;
     private bool _keySetMoves;
+    private HashSet<string> _keySetHolders = new HashSet<string>(StringComparer.Ordinal);
 
     /// <summary>The current request, supplied by static server rendering.</summary>
     [CascadingParameter]
     public HttpContext? HttpContext { get; set; }
 
     /// <inheritdoc />
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
         string? handle = AccountPrincipal.Handle(HttpContext?.User);
         if (handle is null)
@@ -100,9 +101,31 @@
         _passkeys = Inventory.List(handle).OrderBy(passkey => passkey.CreatedUtc).ToList();
         // Whether removing the key-set passkey moves the key first (#20) or leaves it on record (A).
         _keySetMoves = Handover.IsAvailable;
+        // Where the key set can move, the badge follows the registrar (what removing the passkey will
+        // actually do), not the stored flag. It runs off the renderer's dispatcher: resolving through
+        // the registrar's object store on it hung the page render.
+        _keySetHolders = _keySetMoves ? await Task.Run(() => KeySetHolders(_passkeys)) : new HashSet<string>(StringComparer.Ordinal);
         // Sign-up writes the profile after the passkey claims the handle. If that write failed,
         // the page asks for the details again rather than writing a profile the person didn't give.
         _profileComplete = SignUp.HasProfile(handle);
+    }
+
+    private bool HoldsKeySet(PasskeyCredentialData passkey)
+    {
+        return _keySetMoves ? _keySetHolders.Contains(passkey.CredentialId) : passkey.IsRegisteredKeySet;
+    }
+
+    // When the registrar can't be asked, the stored flags are all there is.
+    private HashSet<string> KeySetHolders(IReadOnlyList<PasskeyCredentialData> passkeys)
+    {
+        try
+        {
+            return passkeys.Where(passkey => Handover.IsRequiredFor(passkey)).Select(passkey => passkey.CredentialId).ToHashSet(StringComparer.Ordinal);
+        }
+        catch (Exception)
+        {
+            return passkeys.Where(passkey => passkey.IsRegisteredKeySet).Select(passkey => passkey.CredentialId).ToHashSet(StringComparer.Ordinal);
+        }
     }
 
     private static string Day(DateTime moment)

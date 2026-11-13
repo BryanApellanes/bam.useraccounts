@@ -239,6 +239,102 @@ public class KeySetHandoverShould : UnitTestMenuContainer
     }
 
     [UnitTest]
+    public void AskForAHandoverWhenTheHeirIsRemovedWhileTheHandoverCompletes()
+    {
+        When.A<HandoverFixture>("removes the heir while a handover to it completes", new HandoverFixture(nameof(AskForAHandoverWhenTheHeirIsRemovedWhileTheHandoverCompletes)), (fixture) =>
+        {
+            SyntheticAuthenticator first = new SyntheticAuthenticator();
+            SyntheticAuthenticator second = new SyntheticAuthenticator();
+            SyntheticAuthenticator third = new SyntheticAuthenticator();
+            string firstId = fixture.SignUp(first);
+            string secondId = fixture.Add(second);
+            fixture.Add(third);
+            KeySetHandoverStart start = fixture.Handover.Begin(Handle, firstId, secondId, null);
+
+            // Hold the lock a handover completes under, let the removal of the heir reach it, then
+            // complete the handover: the removal must decide against the key set the handover left.
+            PasskeyRemoval raced = PasskeyRemoval.NotFound;
+            Thread removal = new Thread(() => raced = fixture.Inventory.Remove(Handle, secondId));
+            KeySetHandoverResult done;
+            bool removalWaited;
+            lock (PasskeyInventory.RemovalLock)
+            {
+                removal.Start();
+                removalWaited = WaitUntilBlocked(removal);
+                done = fixture.Handover.Complete(Handle, start.HandoverId, HandoverFixture.AssertionJson(first, start));
+            }
+            removal.Join();
+
+            return new RaceOutcome(removalWaited, done, raced, fixture.Credentials.FindByCredentialId(secondId) is not null, fixture.KeySetIs(second));
+        })
+        .TheTest
+        .ShouldPass<RaceOutcome>((because, outcome) =>
+        {
+            because.ItsTrue("the removal reached the lock while the handover held it", outcome.RemovalWaited);
+            because.ItsTrue("the handover completes", outcome.Done.Success);
+            because.ItsTrue($"removing the heir that has just become the key set asks for a handover ({outcome.Raced})", outcome.Raced == PasskeyRemoval.KeySetHandoverRequired);
+            because.ItsTrue("the heir is still there and holds the key set", outcome.HeirKept && outcome.KeySetIsTheHeir);
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    [UnitTest]
+    public void RefuseAPendingPasskeyAndAnExpiredHandover()
+    {
+        When.A<HandoverFixture>("names pending passkeys, then completes a handover after it expired", new HandoverFixture(nameof(RefuseAPendingPasskeyAndAnExpiredHandover)), (fixture) =>
+        {
+            SyntheticAuthenticator first = new SyntheticAuthenticator();
+            SyntheticAuthenticator second = new SyntheticAuthenticator();
+            string firstId = fixture.SignUp(first);
+            string secondId = fixture.Add(second);
+            // A third passkey, so marking one pending still leaves two: the refusal is the pending rule, not the last-passkey one.
+            fixture.Add(new SyntheticAuthenticator());
+
+            PasskeyCredentialData heirRow = fixture.Credentials.FindByCredentialId(secondId)!;
+            heirRow.Pending = true;
+            KeySetHandoverRefusal pendingHeir = fixture.Handover.Begin(Handle, firstId, secondId, null).Refusal;
+            heirRow.Pending = false;
+            PasskeyCredentialData keySetRow = fixture.Credentials.FindByCredentialId(firstId)!;
+            keySetRow.Pending = true;
+            KeySetHandoverRefusal pendingKeySet = fixture.Handover.Begin(Handle, firstId, secondId, null).Refusal;
+            keySetRow.Pending = false;
+
+            fixture.Options.ChallengeLifetime = TimeSpan.FromMilliseconds(1);
+            KeySetHandoverStart start = fixture.Handover.Begin(Handle, firstId, secondId, null);
+            Thread.Sleep(50);
+            KeySetHandoverResult expired = fixture.Handover.Complete(Handle, start.HandoverId, HandoverFixture.AssertionJson(first, start));
+
+            return new PendingExpiryOutcome(pendingHeir, pendingKeySet, start.Success, expired.Refusal, fixture.KeySetIs(first),
+                fixture.Credentials.FindByCredentialId(firstId) is not null && fixture.Credentials.FindByCredentialId(secondId) is not null);
+        })
+        .TheTest
+        .ShouldPass<PendingExpiryOutcome>((because, outcome) =>
+        {
+            because.ItsTrue($"a pending heir is refused ({outcome.PendingHeir})", outcome.PendingHeir == KeySetHandoverRefusal.InvalidHeir);
+            because.ItsTrue($"a pending passkey has nothing to hand over ({outcome.PendingKeySet})", outcome.PendingKeySet == KeySetHandoverRefusal.NotFound);
+            because.ItsTrue("the short-lived handover begins", outcome.Begun);
+            because.ItsTrue($"completing it after it expired is refused ({outcome.Expired})", outcome.Expired == KeySetHandoverRefusal.HandoverExpired);
+            because.ItsTrue("and the key set and both passkeys stay as they were", outcome.KeySetKept && outcome.BothKept);
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    private static bool WaitUntilBlocked(Thread thread)
+    {
+        for (int attempt = 0; attempt < 1000; attempt++)
+        {
+            if ((thread.ThreadState & ThreadState.WaitSleepJoin) != 0)
+            {
+                return true;
+            }
+            Thread.Sleep(5);
+        }
+        return false;
+    }
+
+    [UnitTest]
     public void AnchorAndProveOnlyForThePasskeyThatHoldsTheKeySet()
     {
         When.A<HandoverFixture>("checks the passkey rotation proof on its own", new HandoverFixture(nameof(AnchorAndProveOnlyForThePasskeyThatHoldsTheKeySet)), (fixture) =>
@@ -320,6 +416,10 @@ public class KeySetHandoverShould : UnitTestMenuContainer
         bool WinnerDone, KeySetHandoverRefusal KeySetChanged, bool MovedOnce);
 
     private sealed record KeepOutcome(PasskeyRemoval Removal, bool Gone, bool KeySetKept, KeySetHandoverRefusal NoHandover, PasskeyRemoval Last);
+
+    private sealed record RaceOutcome(bool RemovalWaited, KeySetHandoverResult Done, PasskeyRemoval Raced, bool HeirKept, bool KeySetIsTheHeir);
+
+    private sealed record PendingExpiryOutcome(KeySetHandoverRefusal PendingHeir, KeySetHandoverRefusal PendingKeySet, bool Begun, KeySetHandoverRefusal Expired, bool KeySetKept, bool BothKept);
 
     private sealed record ProofOutcome(bool AnchorsCurrent, bool AnchorsProposedHeir, bool AnchorsTwoKeys, bool AnchorsUnderAnotherHandle, bool AnchorsAStranger,
         bool AnchorsEmpty, bool AnchorsPending, bool Valid, bool ReplayRefused, bool HeirRefused, bool BobRefused, bool UntaggedRefused, bool OtherHandleRefused,

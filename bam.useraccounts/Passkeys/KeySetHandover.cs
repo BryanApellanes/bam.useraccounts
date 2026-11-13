@@ -21,7 +21,9 @@ namespace Bam.UserAccounts.Passkeys;
 /// </list>
 /// The rotation comes before the removal on purpose: a fault between them leaves the old passkey
 /// signing in but no longer the key set, and a retry of the removal is then a plain removal.
-/// Completion runs under the inventory's removal lock, so it can't race a removal of the heir.
+/// Completion runs under the inventory's removal lock, and a removal decides whether it needs a
+/// handover under the same lock, so removing the heir while a handover completes is asked for a
+/// handover rather than removing the passkey that has just become the key set.
 /// </summary>
 public sealed class KeySetHandover : IKeySetHandover
 {

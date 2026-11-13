@@ -51,6 +51,8 @@ public static class AccountEndpoints
         group.MapGet("/passkeys", ListPasskeys).RequireAuthorization(AccountWebRegistration.Policy);
         group.MapPost("/passkeys/{credentialId}/name", RenameAsync).RequireAuthorization(AccountWebRegistration.Policy);
         group.MapDelete("/passkeys/{credentialId}", RemoveAsync).RequireAuthorization(AccountWebRegistration.Policy);
+        // Signed in, but each begin stores a challenge row and each complete runs a ceremony, so
+        // they share the ceremony endpoints' per-client budget rather than going unlimited.
         group.MapPost("/passkeys/{credentialId}/handover/begin", BeginHandoverAsync).RequireAuthorization(AccountWebRegistration.Policy).RequireRateLimiting(AccountRateLimitOptions.AnonymousPolicy);
         group.MapPost("/passkeys/{credentialId}/handover/complete", CompleteHandoverAsync).RequireAuthorization(AccountWebRegistration.Policy).RequireRateLimiting(AccountRateLimitOptions.AnonymousPolicy);
         group.MapPost("/profile", CompleteProfileAsync).RequireAuthorization(AccountWebRegistration.Policy);

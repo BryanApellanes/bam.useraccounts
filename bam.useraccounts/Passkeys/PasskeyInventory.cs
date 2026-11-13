@@ -91,19 +91,25 @@ public sealed class PasskeyInventory : IPasskeyInventory
         {
             return PasskeyRemoval.NotFound;
         }
-        if (!keepKeySet && _handover is not null && List(personHandle).Count > 1 && _handover.IsRequiredFor(credential))
-        {
-            // The last passkey is refused below as before: there is nobody to hand the key set to.
-            return PasskeyRemoval.KeySetHandoverRequired;
-        }
-        // The count and the removal are one step: two removals racing for a person's last two
-        // passkeys must leave one.  Removals are rare, so one process-wide lock is enough; the
-        // repositories themselves are process-local (cross-process custody is #4).
+        // The count, the key-set decision and the removal are one step under the lock a handover
+        // completes under: two removals racing for a person's last two passkeys must leave one, and
+        // a removal racing a handover must see the key set where the handover left it, or it could
+        // remove the heir that has just become the key set.  Removals are rare, so one process-wide
+        // lock is enough; the repositories themselves are process-local (cross-process custody is #4).
         lock (RemovalLock)
         {
+            credential = Owned(personHandle, credentialId);
+            if (credential is null)
+            {
+                return PasskeyRemoval.NotFound;
+            }
             if (List(personHandle).Count <= 1)
             {
                 return PasskeyRemoval.LastCredential;
+            }
+            if (!keepKeySet && _handover is not null && _handover.IsRequiredFor(credential))
+            {
+                return PasskeyRemoval.KeySetHandoverRequired;
             }
             if (!_credentials.Remove(personHandle, credential.CredentialId))
             {
