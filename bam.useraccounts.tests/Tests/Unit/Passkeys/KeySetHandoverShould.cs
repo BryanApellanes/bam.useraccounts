@@ -52,11 +52,13 @@ public class KeySetHandoverShould : UnitTestMenuContainer
             bool firstGone = fixture.Credentials.FindByCredentialId(firstId) is null;
             bool secondMarked = fixture.Credentials.FindByCredentialId(secondId)!.IsRegisteredKeySet;
             bool firstBlocklisted = fixture.KeyIsBlocklisted(first);
-            bool secondNowNeedsHandover = fixture.Inventory.Remove(Handle, secondId) == PasskeyRemoval.KeySetHandoverRequired;
+            // the heir is now the only passkey, so removing it is refused as the last one
+            bool secondIsTheLast = fixture.Inventory.Remove(Handle, secondId) == PasskeyRemoval.LastCredential;
 
             // From an RSA-slot passkey key set: the RSA proof anchors it too and refuses the
             // assertion first; the passkey proof still proves it.
             string thirdId = fixture.Add(third);
+            bool secondNowNeedsHandover = secondIsTheLast && fixture.Inventory.Remove(Handle, secondId) == PasskeyRemoval.KeySetHandoverRequired;
             KeySetHandoverStart again = fixture.Handover.Begin(Handle, secondId, thirdId, null);
             KeySetHandoverResult againDone = fixture.Handover.Complete(Handle, again.HandoverId, HandoverFixture.AssertionJson(second, again));
             bool movedToThird = fixture.KeySetIs(third);
@@ -79,7 +81,7 @@ public class KeySetHandoverShould : UnitTestMenuContainer
             because.ItsTrue("the old passkey is removed", outcome.FirstGone);
             because.ItsTrue("the heir is marked as the key set", outcome.SecondMarked);
             because.ItsTrue("the old key is blocklisted under any handle", outcome.FirstBlocklisted);
-            because.ItsTrue("the heir now needs a handover to be removed", outcome.SecondNowNeedsHandover);
+            because.ItsTrue("the heir is the last passkey alone, and needs a handover to be removed once another is added", outcome.SecondNowNeedsHandover);
             because.ItsTrue("an RSA-slot passkey key set hands over too", outcome.AgainDone.Success && outcome.MovedToThird && outcome.SecondBlocklisted);
             because.ItsTrue("one passkey is left", outcome.Remaining == 1);
         })
