@@ -1,5 +1,6 @@
 using Bam.DependencyInjection;
 using Bam.Encryption;
+using Bam.Protocol.Data;
 
 namespace Bam.UserAccounts.Passkeys;
 
@@ -70,6 +71,47 @@ public static class PasskeysServiceRegistration
             registry.For<IAccountConfirmation>().Use<PasskeyAccountConfirmation>();
         }
 
+        // The handover is always bound; it is available only once a passkey rotation proof is trusted.
+        registry.For<IKeySetHandover>().Use<KeySetHandover>(reg => new KeySetHandover(
+            reg.Get<IPasskeyCredentialRepository>(),
+            reg.Get<IPublicKeySetRegistrar>(),
+            reg.Contains<KeySetRotationProofs>() ? reg.Get<KeySetRotationProofs>() : null,
+            reg.Get<IConfirmationChallengeRepository>(),
+            reg.Get<PasskeyOptions>()));
+        if (registry.Contains<KeySetRotationProofs>())
+        {
+            registry.AddPasskeyKeySetRotation();
+        }
+
+        return registry;
+    }
+
+    /// <summary>
+    /// Trusts <see cref="PasskeyKeySetRotationProof"/> for key-set rotation (bam.useraccounts#20):
+    /// adds it to the host's <see cref="KeySetRotationProofs"/>, which makes
+    /// <see cref="IKeySetHandover"/> available.  <see cref="AddPasskeys"/> calls this when the proof
+    /// list is already registered (the profile repository registration, for example
+    /// <c>AddEncryptedProfileRepository</c>, registers it); a host that registers the profile
+    /// repository after <see cref="AddPasskeys"/> calls this itself afterwards.  Calling it twice
+    /// adds the proof once.
+    /// </summary>
+    /// <param name="registry">The host registry, with <see cref="AddPasskeys"/> applied.</param>
+    /// <returns>The registry.</returns>
+    /// <exception cref="InvalidOperationException">The registry has no <see cref="KeySetRotationProofs"/>, or <see cref="AddPasskeys"/> has not run.</exception>
+    public static ServiceRegistry AddPasskeyKeySetRotation(this ServiceRegistry registry)
+    {
+        ArgumentNullException.ThrowIfNull(registry);
+        if (!registry.Contains<KeySetRotationProofs>() || !registry.Contains<IPasskeyCredentialRepository>() || !registry.Contains<PasskeyCeremony>())
+        {
+            throw new InvalidOperationException("AddPasskeyKeySetRotation needs AddPasskeys and a registered KeySetRotationProofs (the profile repository registration).");
+        }
+        KeySetRotationProofs proofs = registry.Get<KeySetRotationProofs>();
+        if (proofs.All.Any(proof => proof is PasskeyKeySetRotationProof))
+        {
+            return registry;
+        }
+        // The ceremony is resolved per rotation: it depends on the registrar, which depends on this list.
+        proofs.Add(new PasskeyKeySetRotationProof(registry.Get<IPasskeyCredentialRepository>(), () => registry.Get<PasskeyCeremony>()));
         return registry;
     }
 }

@@ -132,6 +132,23 @@ public sealed class PersistedPasskeyCredentialRepository : IPasskeyCredentialRep
     }
 
     /// <inheritdoc />
+    public bool SetRegisteredKeySet(string personHandle, string credentialId, bool isRegisteredKeySet)
+    {
+        lock (_lock)
+        {
+            PasskeyCredentialData? credential = QueryBy(nameof(PasskeyCredentialData.CredentialId), credentialId)
+                .FirstOrDefault(row => string.Equals(row.PersonHandle, personHandle, StringComparison.Ordinal));
+            if (credential is null)
+            {
+                return false;
+            }
+            credential.IsRegisteredKeySet = isRegisteredKeySet;
+            _repository.Update(credential);
+            return true;
+        }
+    }
+
+    /// <inheritdoc />
     public bool Remove(string personHandle, string credentialId)
     {
         lock (_lock)

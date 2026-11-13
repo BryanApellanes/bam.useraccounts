@@ -78,6 +78,8 @@ public sealed class FaultingPasskeyCredentialRepository : IPasskeyCredentialRepo
 
     public bool SetName(string personHandle, string credentialId, string? name) => _inner.SetName(personHandle, credentialId, name);
 
+    public bool SetRegisteredKeySet(string personHandle, string credentialId, bool isRegisteredKeySet) => _inner.SetRegisteredKeySet(personHandle, credentialId, isRegisteredKeySet);
+
     public bool Remove(string personHandle, string credentialId)
     {
         if (RemoveThrows is not null)
