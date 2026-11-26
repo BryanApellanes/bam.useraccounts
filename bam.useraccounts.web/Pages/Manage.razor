@@ -36,6 +36,7 @@
     @if (_pending is not null)
     {
         <div class="account-recovery-pending alert alert-warning">
+            <p class="account-recovery-title"><strong>@Site.Strings.RecoveryPendingTitle</strong></p>
             <p>@string.Format(CultureInfo.InvariantCulture, Site.Strings.RecoveryPendingBanner, HeirName(_pending), Day(_pending.EffectiveUtc))</p>
             <PasskeyButton Mode="cancelrecovery" RecoveryId="@_pending.RecoveryId" Label="@Site.Strings.CancelRecovery" CssClass="btn-outline-danger" />
         </div>
@@ -43,6 +44,7 @@
     else if (_recoverable)
     {
         <div class="account-recovery alert alert-info">
+            <p class="account-recovery-title"><strong>@Site.Strings.RecoveryRecoverableTitle</strong></p>
             <p>@Site.Strings.RecoveryRecoverableNote</p>
             <PasskeyButton Mode="recover" Label="@Site.Strings.RecoverKeySet" />
         </div>
@@ -158,7 +160,11 @@
     private string HeirName(PendingKeySetRecoveryData pending)
     {
         PasskeyCredentialData? heir = _passkeys.FirstOrDefault(passkey => string.Equals(passkey.CredentialId, pending.HeirCredentialId, StringComparison.Ordinal));
-        return string.IsNullOrWhiteSpace(heir?.Name) ? Site.Strings.UnnamedPasskey : heir.Name;
+        if (heir is null)
+        {
+            return Site.Strings.RecoveryHeirNotListed;
+        }
+        return string.IsNullOrWhiteSpace(heir.Name) ? Site.Strings.UnnamedPasskey : heir.Name;
     }
 
     private static string Day(DateTime moment)

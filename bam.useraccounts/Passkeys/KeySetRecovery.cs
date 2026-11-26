@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Bam.Encryption;
 using Bam.Logging;
 using Bam.Protocol.Data;
 using Bam.Protocol.Data.Profile;
@@ -84,7 +85,7 @@ public sealed class KeySetRecovery : IKeySetRecovery
             return false;
         }
         PublicKeySetData? current = _registrar.Resolve(personHandle);
-        return current is not null && Holder(personHandle, current) is null && Pending(personHandle) is null;
+        return current is not null && Holder(personHandle, current) is null && WasRemovedPasskeyKeySet(personHandle, current) && Pending(personHandle) is null;
     }
 
     /// <inheritdoc />
@@ -115,6 +116,12 @@ public sealed class KeySetRecovery : IKeySetRecovery
         if (removes is null && Holder(personHandle, current) is not null)
         {
             return Refused(KeySetRecoveryRefusal.RemovesRequired);
+        }
+        if (removes is null && !WasRemovedPasskeyKeySet(personHandle, current))
+        {
+            // No passkey holds it and none of the person's removed passkeys did: an admin rebind or
+            // a device key.  Recovery moves only a key set a passkey of the person held.
+            return Refused(KeySetRecoveryRefusal.NoKeySet);
         }
         if (!IsAvailable)
         {
@@ -205,7 +212,7 @@ public sealed class KeySetRecovery : IKeySetRecovery
                     return Failed(personHandle, KeySetRecoveryRefusal.KeySetChanged, "the passkey holding the key set changed since the recovery began.");
                 }
             }
-            else if (Holder(personHandle, current) is not null)
+            else if (Holder(personHandle, current) is not null || !WasRemovedPasskeyKeySet(personHandle, current))
             {
                 return Failed(personHandle, KeySetRecoveryRefusal.KeySetChanged, "a passkey holds the key set again since the recovery began.");
             }
@@ -244,6 +251,14 @@ public sealed class KeySetRecovery : IKeySetRecovery
             {
                 return Failed(personHandle, KeySetRecoveryRefusal.ProofRefused, "the heir's assertion was not user-verified.");
             }
+            // The challenge is the rotation itself, not a server nonce, and a synced passkey's counter
+            // stays at 0, so an earlier recovery's assertion verifies again.  Refusing one any earlier
+            // recovery of the person stored keeps a cancel final.
+            string assertionText = Encoding.UTF8.GetString(assertionJson);
+            if (_recoveries.FindByHandle(personHandle).Any(earlier => string.Equals(earlier.AssertionJson, assertionText, StringComparison.Ordinal)))
+            {
+                return Failed(personHandle, KeySetRecoveryRefusal.ProofRefused, "the heir's assertion was already used by an earlier recovery.");
+            }
 
             DateTime began = Now;
             PendingKeySetRecoveryData recovery = new PendingKeySetRecoveryData
@@ -255,7 +270,7 @@ public sealed class KeySetRecovery : IKeySetRecovery
                 HeirCredentialId = heir.CredentialId,
                 HeirKeyFingerprint = PublicKeyFingerprint.Of(heir.PublicKeyPem) ?? string.Empty,
                 Anchor = state.Anchor,
-                AssertionJson = Encoding.UTF8.GetString(assertionJson),
+                AssertionJson = assertionText,
                 BeganUtc = began,
                 EffectiveUtc = began.Add(_options.RecoveryDelay)
             };
@@ -264,6 +279,9 @@ public sealed class KeySetRecovery : IKeySetRecovery
             // sessions end on their next request, when the session check finds no credential.
             if (removes is not null)
             {
+                // Recorded so that, if this recovery is canceled, a later one can still move the key
+                // set the removed passkey held.
+                PasskeyInventory.RecordRemovedKey(_recoveries, removes);
                 _credentials.Remove(personHandle, removes.CredentialId);
             }
             Log.Warn("Key-set recovery {0} for {1} proved by passkey {2}: the key set moves at {3} unless canceled{4}", PasskeyText.Printable(recoveryId), PasskeyText.Printable(personHandle),
@@ -351,21 +369,39 @@ public sealed class KeySetRecovery : IKeySetRecovery
             {
                 return KeySetRecoverySettlement.NothingPending;
             }
-            if (Now < recovery.EffectiveUtc)
+            // Held to the delay from the begin time too, as the proof holds it, so a row whose
+            // effective time was moved earlier at rest just waits rather than being refused.
+            if (Now < recovery.EffectiveUtc || Now < recovery.BeganUtc.Add(_options.RecoveryDelay))
             {
                 return KeySetRecoverySettlement.NotDue;
             }
             PasskeyCredentialData heir = Owned(personHandle, recovery.HeirCredentialId)!;
             PublicKeySetData? current = _registrar.Resolve(personHandle);
+            if (current is not null && PasskeyKeySet.IsHeldBy(current, heir))
+            {
+                // The key set is already the heir's: an earlier settle moved it and then failed to
+                // record that.  Record it now rather than end the recovery as changed.
+                return Completed(recovery, heir);
+            }
             if (current is null || !string.Equals(KeySetRotationPayload.AnchorSha256(current), recovery.Anchor, StringComparison.Ordinal))
             {
                 End(recovery, KeySetRecoveryEnd.KeySetChanged, null);
                 Log.Warn("Key-set recovery {0} for {1} ended: the key set moved some other way before it was due", PasskeyText.Printable(recovery.RecoveryId), PasskeyText.Printable(personHandle));
                 return KeySetRecoverySettlement.Ended;
             }
+            PublicKeySetData proposed = PasskeyKeySet.From(heir);
+            byte[] proof = Encoding.UTF8.GetBytes(recovery.AssertionJson);
+            // Asked first, outside the registrar, so a fault can be told from a refusal: a proof that
+            // throws (a store timeout, say) leaves the recovery waiting through Settle's catch, and only
+            // a clean refusal ends it.  The registrar counts a throwing proof as a refusal.
+            ISignatureVerification verification = RecoveryProof().Verify(current, proposed, proof);
+            if (!verification.Success)
+            {
+                return Refused(recovery, personHandle, verification.Message);
+            }
             try
             {
-                _registrar.Rotate(PasskeyKeySet.From(heir), Encoding.UTF8.GetBytes(recovery.AssertionJson));
+                _registrar.Rotate(proposed, proof);
             }
             catch (KeySetRotationTooSoonException)
             {
@@ -373,23 +409,59 @@ public sealed class KeySetRecovery : IKeySetRecovery
                 Log.Info("Key-set recovery {0} for {1} is due but the handle rotated too recently; it waits", PasskeyText.Printable(recovery.RecoveryId), PasskeyText.Printable(personHandle));
                 return KeySetRecoverySettlement.Deferred;
             }
+            catch (InvalidKeySetRotationException e)
+            {
+                // The proof verified a moment ago, so the registrar's own verification failing (or
+                // throwing) is a fault, not a decision: stay waiting.  The recovery can still be canceled.
+                Log.Warn("Key-set recovery {0} for {1} is due but the registrar could not verify it now ({2}); it waits", PasskeyText.Printable(recovery.RecoveryId), PasskeyText.Printable(personHandle), PasskeyText.Printable(e.Message, PasskeyVerification.MaxDetailLength));
+                return KeySetRecoverySettlement.Deferred;
+            }
             catch (KeySetRegistrationException e)
             {
-                // A policy refusal (the proof, or the heir's key is blocklisted or claimed): retrying
-                // won't change it, so the recovery ends and the key set stays.
-                End(recovery, KeySetRecoveryEnd.Refused, null);
-                Log.Warn("Key-set recovery {0} for {1} ended: the registrar refused the rotation ({2})", PasskeyText.Printable(recovery.RecoveryId), PasskeyText.Printable(personHandle), PasskeyText.Printable(e.Message, PasskeyVerification.MaxDetailLength));
-                return KeySetRecoverySettlement.Ended;
+                // The heir's key is blocklisted or claimed by another handle: retrying won't change
+                // it, so the recovery ends and the key set stays.
+                return Refused(recovery, personHandle, e.Message);
             }
-
-            // The key set has moved.  Mark the recovery done first: the proof no longer anchors a
-            // completed recovery, so nothing can replay it.
-            recovery.CompletedUtc = Now;
-            _recoveries.Update(recovery);
-            _credentials.SetRegisteredKeySet(personHandle, heir.CredentialId, true);
-            Log.Warn("Key-set recovery {0} for {1} done: the key set moved to passkey {2}", PasskeyText.Printable(recovery.RecoveryId), PasskeyText.Printable(personHandle), PasskeyText.Printable(heir.CredentialId));
-            return KeySetRecoverySettlement.Settled;
+            return Completed(recovery, heir);
         }
+    }
+
+    // The key set has moved.  Mark the recovery done first: the proof no longer anchors a completed
+    // recovery, so nothing can replay it.
+    private KeySetRecoverySettlement Completed(PendingKeySetRecoveryData recovery, PasskeyCredentialData heir)
+    {
+        recovery.CompletedUtc = Now;
+        _recoveries.Update(recovery);
+        _credentials.SetRegisteredKeySet(recovery.PersonHandle, heir.CredentialId, true);
+        Log.Warn("Key-set recovery {0} for {1} done: the key set moved to passkey {2}", PasskeyText.Printable(recovery.RecoveryId), PasskeyText.Printable(recovery.PersonHandle), PasskeyText.Printable(heir.CredentialId));
+        return KeySetRecoverySettlement.Settled;
+    }
+
+    private KeySetRecoverySettlement Refused(PendingKeySetRecoveryData recovery, string personHandle, string? reason)
+    {
+        End(recovery, KeySetRecoveryEnd.Refused, null);
+        Log.Warn("Key-set recovery {0} for {1} ended: the rotation was refused ({2})", PasskeyText.Printable(recovery.RecoveryId), PasskeyText.Printable(personHandle), PasskeyText.Printable(reason ?? string.Empty, PasskeyVerification.MaxDetailLength));
+        return KeySetRecoverySettlement.Ended;
+    }
+
+    private PasskeyRecoveryRotationProof RecoveryProof()
+    {
+        // IsAvailable was checked first, so the proof is there.
+        return _proofs!.All.OfType<PasskeyRecoveryRotationProof>().First();
+    }
+
+    // Whether the key set holds exactly one key, and a passkey of the person with that key was
+    // removed: the key set a recovery naming no removes may move.
+    private bool WasRemovedPasskeyKeySet(string personHandle, PublicKeySetData current)
+    {
+        bool hasRsa = !string.IsNullOrEmpty(current.PublicRsaKey);
+        bool hasEcc = !string.IsNullOrEmpty(current.PublicEccKey);
+        if (hasRsa == hasEcc)
+        {
+            return false;
+        }
+        string? fingerprint = PublicKeyFingerprint.Of(hasRsa ? current.PublicRsaKey : current.PublicEccKey);
+        return fingerprint is not null && _recoveries.WasRemovedPasskeyKey(personHandle, fingerprint);
     }
 
     private void End(PendingKeySetRecoveryData recovery, string reason, string? byCredentialId)

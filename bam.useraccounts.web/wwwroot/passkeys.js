@@ -185,7 +185,11 @@ export async function register(fields) {
     return call("POST", "/passkey/registration/complete", Object.assign({}, fields, { credential: credentialToJson(credential) }));
 }
 
-/** Signs in. A blank handle lets the authenticator offer its passkeys. Resolves to { handle, displayName, nextUrl }. */
+/**
+ * Signs in. A blank handle lets the authenticator offer its passkeys. Resolves to { handle, displayName,
+ * nextUrl, pendingRecovery }: while a recovery waits, pendingRecovery is set and nextUrl is the manage page,
+ * which shows it with its cancel.
+ */
 export async function signIn(handle, returnUrl) {
     requireSupport();
     const begun = await call("POST", "/passkey/assertion/begin", { handle: handle || null });

@@ -25,7 +25,7 @@ public sealed class HandoverFixture
         Clock = new ManualClock();
         Challenges = new InMemoryConfirmationChallengeRepository();
         Credentials = new InMemoryPasskeyCredentialRepository();
-        Recoveries = new InMemoryKeySetRecoveryRepository();
+        Recoveries = new FaultingKeySetRecoveryRepository();
         Proofs = KeySetRotationProofChain.DefaultProofs();
         ObjectDataRepository store = CreateObjectDataRepository(testName);
         Store = store;
@@ -33,7 +33,7 @@ public sealed class HandoverFixture
         Registrar = new PublicKeySetRegistrar(store, new KeySetRotationProofChain(Proofs), new PublicKeySetResolver(store), policy);
         Ceremony = new PasskeyCeremony(Options, Challenges, Credentials, new PasskeyRegistrationVerifier(Options), new PasskeyAssertionVerifier(Options, new DetachedSignatureVerifier()), Registrar);
         Proof = new PasskeyKeySetRotationProof(Credentials, Ceremony);
-        RecoveryProof = new PasskeyRecoveryRotationProof(Recoveries, Credentials, new PasskeyAssertionVerifier(Options, new DetachedSignatureVerifier()), Clock);
+        RecoveryProof = new PasskeyRecoveryRotationProof(Recoveries, Credentials, new PasskeyAssertionVerifier(Options, new DetachedSignatureVerifier()), Clock, Options);
         if (trustPasskeyProof)
         {
             Proofs.Add(Proof);
@@ -44,7 +44,7 @@ public sealed class HandoverFixture
         }
         Recovery = new KeySetRecovery(Credentials, Recoveries, Registrar, Proofs, Challenges, () => Ceremony, Options, Clock);
         Handover = new KeySetHandover(Credentials, Registrar, Proofs, Challenges, Options, Recovery);
-        Inventory = new PasskeyInventory(Credentials, Handover);
+        Inventory = new PasskeyInventory(Credentials, Handover, Recoveries);
     }
 
     public PasskeyOptions Options { get; }
@@ -58,7 +58,7 @@ public sealed class HandoverFixture
     public PasskeyInventory Inventory { get; }
     public ManualClock Clock { get; }
     public ObjectDataRepository Store { get; }
-    public InMemoryKeySetRecoveryRepository Recoveries { get; }
+    public FaultingKeySetRecoveryRepository Recoveries { get; }
     public PasskeyRecoveryRotationProof RecoveryProof { get; }
     public KeySetRecovery Recovery { get; }
 

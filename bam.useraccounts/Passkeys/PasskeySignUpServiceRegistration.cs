@@ -36,7 +36,8 @@ public static class PasskeySignUpServiceRegistration
         registry
             .For<PasskeySignUp>().Use<PasskeySignUp>()
             .For<IPasskeySignUp>().Use<PasskeySignUp>()
-            .For<PasskeyInventory>().Use<PasskeyInventory>(reg => new PasskeyInventory(reg.Get<IPasskeyCredentialRepository>(), reg.Get<IKeySetHandover>()))
+            .For<PasskeyInventory>().Use<PasskeyInventory>(reg => new PasskeyInventory(reg.Get<IPasskeyCredentialRepository>(), reg.Get<IKeySetHandover>(),
+                reg.Contains<IKeySetRecoveryRepository>() ? reg.Get<IKeySetRecoveryRepository>() : null))
             .For<IPasskeyInventory>().Use<PasskeyInventory>(reg => reg.Get<PasskeyInventory>());
         return registry;
     }

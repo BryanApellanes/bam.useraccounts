@@ -8,7 +8,10 @@ namespace Bam.UserAccounts.Passkeys;
 public sealed class InMemoryKeySetRecoveryRepository : IKeySetRecoveryRepository
 {
     private readonly List<PendingKeySetRecoveryData> _rows = new List<PendingKeySetRecoveryData>();
+    private readonly HashSet<RemovedKey> _removedKeys = new HashSet<RemovedKey>();
     private readonly object _lock = new object();
+
+    private sealed record RemovedKey(string PersonHandle, string KeyFingerprint);
 
     /// <inheritdoc />
     public PendingKeySetRecoveryData Save(PendingKeySetRecoveryData recovery)
@@ -58,8 +61,30 @@ public sealed class InMemoryKeySetRecoveryRepository : IKeySetRecoveryRepository
             {
                 return false;
             }
-            _rows[_rows.IndexOf(row)] = Copy(recovery);
+            // Only the fields a recovery may change after it is stored, and only forward, as the
+            // persisted store does.
+            row.AdvanceFrom(recovery);
             return true;
+        }
+    }
+
+    /// <inheritdoc />
+    public void RecordRemovedPasskeyKey(string personHandle, string credentialId, string keyFingerprint)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(personHandle);
+        ArgumentException.ThrowIfNullOrWhiteSpace(keyFingerprint);
+        lock (_lock)
+        {
+            _removedKeys.Add(new RemovedKey(personHandle, keyFingerprint));
+        }
+    }
+
+    /// <inheritdoc />
+    public bool WasRemovedPasskeyKey(string personHandle, string keyFingerprint)
+    {
+        lock (_lock)
+        {
+            return _removedKeys.Contains(new RemovedKey(personHandle, keyFingerprint));
         }
     }
 

@@ -68,7 +68,7 @@ public static class PasskeysServiceRegistration
                 // A host that brought its own custody and no store: recoveries then live in memory. A
                 // restart loses a waiting recovery, which fails safe (the key set doesn't move; the
                 // person starts again), but the host should bind durable custody.
-                Bam.Logging.Log.Warn("AddPasskeys: no IRepository and no IKeySetRecoveryRepository bound; lost-device recoveries are kept in memory and a restart cancels them.");
+                Bam.Logging.Log.Warn("AddPasskeys: no IRepository and no IKeySetRecoveryRepository bound; lost-device recoveries are kept in memory, which suits a single-process host only: a restart cancels them, and another instance can neither see nor cancel them.");
                 registry.For<IKeySetRecoveryRepository>().UseSingleton(new InMemoryKeySetRecoveryRepository());
             }
         }
@@ -144,7 +144,10 @@ public static class PasskeysServiceRegistration
         }
         if (!proofs.All.Any(proof => proof is PasskeyRecoveryRotationProof) && registry.Contains<IKeySetRecoveryRepository>())
         {
-            proofs.Add(new PasskeyRecoveryRotationProof(registry.Get<IKeySetRecoveryRepository>(), registry.Get<IPasskeyCredentialRepository>(), registry.Get<PasskeyAssertionVerifier>(), Clock(registry)));
+            // Resolved per use, as KeySetRecovery resolves them, so the two always read the same
+            // custody and clock whatever the host binds after this.
+            proofs.Add(new PasskeyRecoveryRotationProof(() => registry.Get<IKeySetRecoveryRepository>(), () => registry.Get<IPasskeyCredentialRepository>(),
+                () => registry.Get<PasskeyAssertionVerifier>(), () => Clock(registry), () => registry.Get<PasskeyOptions>()));
         }
         return registry;
     }

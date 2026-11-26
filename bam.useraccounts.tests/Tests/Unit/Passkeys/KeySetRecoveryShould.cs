@@ -336,7 +336,7 @@ public class KeySetRecoveryShould : UnitTestMenuContainer
             // re-bind): the row's anchor no longer matches the registered key set.
             PendingKeySetRecoveryData row = fixture.Recoveries.Find(Handle, second.RecoveryId!)!;
             row.Anchor = "not-the-current-key-set";
-            fixture.Recoveries.Update(row);
+            fixture.Recoveries.RewriteAtRest(row);
             fixture.Clock.Advance(fixture.Options.RecoveryDelay);
             KeySetRecoverySettlement settled = fixture.Recovery.Settle(Handle);
             string? changedReason = fixture.Recoveries.Find(Handle, second.RecoveryId!)?.CancelReason;
@@ -387,6 +387,36 @@ public class KeySetRecoveryShould : UnitTestMenuContainer
             because.ItsTrue("the recovery to the returned key is proved", outcome.Proved);
             because.ItsTrue("the registrar refuses the blocklisted key at settle, and the recovery ends", outcome.Settled == KeySetRecoverySettlement.Ended && outcome.Reason == KeySetRecoveryEnd.Refused);
             because.ItsTrue("the key set is left alone", outcome.KeySetKept);
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    [UnitTest]
+    public void EndARecoveryTheProofRefusesAtSettle()
+    {
+        When.A<HandoverFixture>("settles a recovery whose heir's key changed under the same credential id", new HandoverFixture(nameof(EndARecoveryTheProofRefusesAtSettle)), (fixture) =>
+        {
+            SyntheticAuthenticator lost = new SyntheticAuthenticator();
+            SyntheticAuthenticator heir = new SyntheticAuthenticator();
+            string lostId = fixture.SignUp(lost);
+            string heirId = fixture.Add(heir);
+            fixture.AgePasskeys();
+            KeySetRecoveryStart start = fixture.Recovery.Begin(Handle, lostId, heirId, null);
+            fixture.Recovery.Complete(Handle, start.RecoveryId, HandoverFixture.AssertionJson(heir, start));
+            // The heir's credential id now names another key: the stored assertion no longer proves the move.
+            fixture.Credentials.Remove(Handle, heirId);
+            fixture.Add(new SyntheticAuthenticator { CredentialId = heir.CredentialId });
+            fixture.Clock.Advance(fixture.Options.RecoveryDelay);
+            KeySetRecoverySettlement settled = fixture.Recovery.Settle(Handle);
+            string? reason = fixture.Recoveries.Find(Handle, start.RecoveryId!)?.CancelReason;
+            return new ProofRefusedOutcome(settled, reason, fixture.KeySetIs(lost));
+        })
+        .TheTest
+        .ShouldPass<ProofRefusedOutcome>((because, outcome) =>
+        {
+            because.ItsTrue("a clean refusal by the proof ends the recovery rather than leaving it waiting", outcome.Settled == KeySetRecoverySettlement.Ended && outcome.Reason == KeySetRecoveryEnd.Refused);
+            because.ItsTrue("the key set stays", outcome.KeySetKept);
         })
         .SoBeHappy()
         .UnlessItFailed();
@@ -466,10 +496,10 @@ public class KeySetRecoveryShould : UnitTestMenuContainer
             PasskeyAssertionResponse parsed = PasskeyAssertionResponse.FromJson(Encoding.UTF8.GetBytes(original));
             string tampered = PasskeyJson.Serialize(parsed with { Response = parsed.Response! with { Signature = Base64UrlEncoder.Default.Encode(new byte[64]) } });
             row.AssertionJson = tampered;
-            fixture.Recoveries.Update(row);
+            fixture.Recoveries.RewriteAtRest(row);
             bool tamperedVerifies = fixture.RecoveryProof.Verify(current, toHeir, Encoding.UTF8.GetBytes(tampered)).Success;
             row.AssertionJson = original;
-            fixture.Recoveries.Update(row);
+            fixture.Recoveries.RewriteAtRest(row);
             return new ProofOutcome(anchorsCurrent, anchorsProposed, anchorsBobs, verifies, otherBytes, otherTarget, otherHandle, tamperedVerifies);
         })
         .TheTest
@@ -547,19 +577,24 @@ public class KeySetRecoveryShould : UnitTestMenuContainer
         {
             SyntheticAuthenticator lost = new SyntheticAuthenticator();
             SyntheticAuthenticator heir = new SyntheticAuthenticator();
+            SyntheticAuthenticator other = new SyntheticAuthenticator();
             string lostId = fixture.SignUp(lost);
             string heirId = fixture.Add(heir);
+            string otherId = fixture.Add(other);
             fixture.Inventory.Remove(Handle, lostId, keepKeySet: true);
             fixture.AgePasskeys();
             KeySetRecoveryStart start = fixture.Recovery.Begin(Handle, null, heirId, null);
 
-            // An admin re-bind: a proof other than the passkey proofs moves the key set to a key no passkey holds.
+            // A re-bind by a proof other than the passkey proofs, to the key of another passkey the
+            // person then removes: the key set is again one a removed passkey held, and only the
+            // anchor shows it is not the key set the recovery began from.
             RebindProof rebind = new RebindProof();
             fixture.Proofs.Add(rebind);
             rebind.Armed = true;
-            PublicKeySetData rebound = PasskeyKeySet.From(Handle, CoseAlgorithm.ES256, new SyntheticAuthenticator().PublicKeyPem);
+            PublicKeySetData rebound = PasskeyKeySet.From(Handle, other.Algorithm, other.PublicKeyPem);
             fixture.Registrar.Rotate(rebound, new byte[] { 1 });
             rebind.Armed = false;
+            fixture.Inventory.Remove(Handle, otherId, keepKeySet: true);
 
             KeySetRecoveryResult done = fixture.Recovery.Complete(Handle, start.RecoveryId, HandoverFixture.AssertionJson(heir, start));
             return new ReboundOutcome(done.Refusal, fixture.Recoveries.FindByHandle(Handle).Count, fixture.Credentials.FindByCredentialId(heirId) is not null);
@@ -569,6 +604,193 @@ public class KeySetRecoveryShould : UnitTestMenuContainer
         {
             because.ItsTrue("a key set that moved since begin is refused at complete", outcome.Refusal == KeySetRecoveryRefusal.KeySetChanged);
             because.ItsTrue("nothing is stored and the heir stays", outcome.StoredRecoveries == 0 && outcome.HeirKept);
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    [UnitTest]
+    public void WaitWhenTheStoreFaultsAtSettle()
+    {
+        When.A<HandoverFixture>("settles a due recovery while the recovery store times out once", new HandoverFixture(nameof(WaitWhenTheStoreFaultsAtSettle)), (fixture) =>
+        {
+            SyntheticAuthenticator lost = new SyntheticAuthenticator();
+            SyntheticAuthenticator heir = new SyntheticAuthenticator();
+            string lostId = fixture.SignUp(lost);
+            string heirId = fixture.Add(heir);
+            fixture.AgePasskeys();
+            KeySetRecoveryStart start = fixture.Recovery.Begin(Handle, lostId, heirId, null);
+            fixture.Recovery.Complete(Handle, start.RecoveryId, HandoverFixture.AssertionJson(heir, start));
+            fixture.Clock.Advance(fixture.Options.RecoveryDelay);
+
+            // Read 1 finds the pending recovery; read 2 is the proof's, asked before the registrar.
+            fixture.Recoveries.FailOneReadAfter(1);
+            KeySetRecoverySettlement proofFault = fixture.Recovery.Settle(Handle);
+            bool faultedAtTheProof = fixture.Recoveries.Faults == 1;
+            bool waitingAfterProofFault = fixture.Recovery.Pending(Handle) is not null && fixture.KeySetIs(lost);
+
+            // From read 3 on, the registrar's own asks of the proof, after the proof verified once.
+            fixture.Recoveries.FailReadsAfter(2);
+            KeySetRecoverySettlement registrarFault = fixture.Recovery.Settle(Handle);
+            fixture.Recoveries.Heal();
+            bool faultedAtTheRegistrar = fixture.Recoveries.Faults > 1;
+            bool waitingAfterRegistrarFault = fixture.Recovery.Pending(Handle) is not null && fixture.KeySetIs(lost);
+
+            KeySetRecoverySettlement settled = fixture.Recovery.Settle(Handle);
+            return new FaultOutcome(proofFault, faultedAtTheProof, waitingAfterProofFault, registrarFault, faultedAtTheRegistrar, waitingAfterRegistrarFault, settled, fixture.KeySetIs(heir));
+        })
+        .TheTest
+        .ShouldPass<FaultOutcome>((because, outcome) =>
+        {
+            because.ItsTrue("a store fault in the proof defers the settle", outcome.ProofFault == KeySetRecoverySettlement.Deferred && outcome.FaultedAtTheProof);
+            because.ItsTrue("the recovery keeps waiting and the key set stays", outcome.WaitingAfterProofFault);
+            because.ItsTrue("a store fault inside the registrar defers the settle too", outcome.RegistrarFault == KeySetRecoverySettlement.Deferred && outcome.FaultedAtTheRegistrar);
+            because.ItsTrue("and the recovery still waits", outcome.WaitingAfterRegistrarFault);
+            because.ItsTrue("the next settle moves the key set", outcome.Settled == KeySetRecoverySettlement.Settled && outcome.MovedToHeir);
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    [UnitTest]
+    public void RecoverOnlyAKeySetAPasskeyHeld()
+    {
+        When.A<HandoverFixture>("tries to recover a key set an admin rebound to a key no passkey held", new HandoverFixture(nameof(RecoverOnlyAKeySetAPasskeyHeld)), (fixture) =>
+        {
+            SyntheticAuthenticator lost = new SyntheticAuthenticator();
+            SyntheticAuthenticator heir = new SyntheticAuthenticator();
+            string lostId = fixture.SignUp(lost);
+            string heirId = fixture.Add(heir);
+            fixture.Inventory.Remove(Handle, lostId, keepKeySet: true);
+            bool recoverableWhenOrphaned = fixture.Recovery.IsRecoverable(Handle);
+
+            // An admin re-bind before any recovery begins: the key set is now a key no passkey held.
+            RebindProof rebind = new RebindProof();
+            fixture.Proofs.Add(rebind);
+            rebind.Armed = true;
+            fixture.Registrar.Rotate(PasskeyKeySet.From(Handle, CoseAlgorithm.ES256, new SyntheticAuthenticator().PublicKeyPem), new byte[] { 1 });
+            rebind.Armed = false;
+            fixture.AgePasskeys();
+
+            bool recoverableWhenRebound = fixture.Recovery.IsRecoverable(Handle);
+            KeySetRecoveryRefusal begin = fixture.Recovery.Begin(Handle, null, heirId, null).Refusal;
+            return new ReboundBeforeBeginOutcome(recoverableWhenOrphaned, recoverableWhenRebound, begin, fixture.Recoveries.FindByHandle(Handle).Count);
+        })
+        .TheTest
+        .ShouldPass<ReboundBeforeBeginOutcome>((because, outcome) =>
+        {
+            because.ItsTrue("a key set whose passkey was removed is recoverable", outcome.RecoverableWhenOrphaned);
+            because.ItsTrue("a key set no passkey held is not offered", !outcome.RecoverableWhenRebound);
+            because.ItsTrue("and beginning a recovery of it is refused", outcome.Begin == KeySetRecoveryRefusal.NoKeySet);
+            because.ItsTrue("nothing is stored", outcome.StoredRecoveries == 0);
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    [UnitTest]
+    public void KeepACancelFinalWhenTheCounterStaysAtZero()
+    {
+        When.A<HandoverFixture>("replays a canceled recovery's assertion from a passkey whose counter stays at 0", new HandoverFixture(nameof(KeepACancelFinalWhenTheCounterStaysAtZero)), (fixture) =>
+        {
+            SyntheticAuthenticator lost = new SyntheticAuthenticator();
+            // A synced passkey: its counter is always 0, so the verifier doesn't judge it.
+            SyntheticAuthenticator heir = new SyntheticAuthenticator { SignCount = 0 };
+            string lostId = fixture.SignUp(lost);
+            string heirId = fixture.Add(heir);
+            fixture.AgePasskeys();
+            KeySetRecoveryStart start = fixture.Recovery.Begin(Handle, lostId, heirId, null);
+            byte[] assertion = Encoding.UTF8.GetBytes(PasskeyJson.Serialize(heir.Assert(Base64UrlEncoder.Default.Decode(start.Options!.Challenge))));
+            bool proved = fixture.Recovery.Complete(Handle, start.RecoveryId, assertion).Success;
+            bool canceled = fixture.Recovery.Cancel(Handle, start.RecoveryId!, heirId);
+
+            KeySetRecoveryStart again = fixture.Recovery.Begin(Handle, null, heirId, null);
+            KeySetRecoveryRefusal replayed = fixture.Recovery.Complete(Handle, again.RecoveryId, assertion).Refusal;
+            KeySetRecoveryStart third = fixture.Recovery.Begin(Handle, null, heirId, null);
+            byte[] fresh = Encoding.UTF8.GetBytes(PasskeyJson.Serialize(heir.Assert(Base64UrlEncoder.Default.Decode(third.Options!.Challenge))));
+            bool freshProved = fixture.Recovery.Complete(Handle, third.RecoveryId, fresh).Success;
+            return new ReplayOutcome(proved, canceled, again.Success, replayed, freshProved);
+        })
+        .TheTest
+        .ShouldPass<ReplayOutcome>((because, outcome) =>
+        {
+            because.ItsTrue("the first recovery is proved and canceled", outcome.Proved && outcome.Canceled);
+            because.ItsTrue("the key set its removed passkey held can be recovered again", outcome.BegunAgain);
+            because.ItsTrue("the canceled recovery's assertion can't prove a new one", outcome.Replayed == KeySetRecoveryRefusal.ProofRefused);
+            because.ItsTrue("a fresh assertion by the heir can", outcome.FreshProved);
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    [UnitTest]
+    public void HoldTheDelayAndAnchorOnlyASingleOpenRecovery()
+    {
+        When.A<HandoverFixture>("rewrites a recovery's effective time and adds a second open one", new HandoverFixture(nameof(HoldTheDelayAndAnchorOnlyASingleOpenRecovery)), (fixture) =>
+        {
+            SyntheticAuthenticator lost = new SyntheticAuthenticator();
+            SyntheticAuthenticator heir = new SyntheticAuthenticator();
+            string lostId = fixture.SignUp(lost);
+            string heirId = fixture.Add(heir);
+            fixture.AgePasskeys();
+            PublicKeySetData current = fixture.Registrar.Resolve(Handle)!;
+            KeySetRecoveryStart start = fixture.Recovery.Begin(Handle, lostId, heirId, null);
+            fixture.Recovery.Complete(Handle, start.RecoveryId, HandoverFixture.AssertionJson(heir, start));
+
+            PendingKeySetRecoveryData row = fixture.Recoveries.Find(Handle, start.RecoveryId!)!;
+            row.EffectiveUtc = row.BeganUtc;
+            fixture.Recoveries.RewriteAtRest(row);
+            bool anchorsWithAnEarlyEffectiveTime = fixture.RecoveryProof.Anchors(current);
+            KeySetRecoverySettlement earlySettle = fixture.Recovery.Settle(Handle);
+            row.EffectiveUtc = row.BeganUtc.Add(fixture.Options.RecoveryDelay);
+            fixture.Recoveries.RewriteAtRest(row);
+
+            fixture.Clock.Advance(fixture.Options.RecoveryDelay);
+            bool anchorsWhenDue = fixture.RecoveryProof.Anchors(current);
+            PendingKeySetRecoveryData second = fixture.Recoveries.Find(Handle, start.RecoveryId!)!;
+            second.RecoveryId = "second";
+            fixture.Recoveries.Save(second);
+            bool anchorsWithTwoOpen = fixture.RecoveryProof.Anchors(current);
+            return new DelayHeldOutcome(anchorsWithAnEarlyEffectiveTime, earlySettle, anchorsWhenDue, anchorsWithTwoOpen, fixture.KeySetIs(lost));
+        })
+        .TheTest
+        .ShouldPass<DelayHeldOutcome>((because, outcome) =>
+        {
+            because.ItsTrue("an effective time earlier than the delay doesn't anchor", !outcome.AnchorsWithAnEarlyEffectiveTime);
+            because.ItsTrue("so the early settle just waits", outcome.EarlySettle == KeySetRecoverySettlement.NotDue);
+            because.ItsTrue("once the delay has really passed it anchors", outcome.AnchorsWhenDue);
+            because.ItsTrue("two open recoveries anchor nothing", !outcome.AnchorsWithTwoOpen);
+            because.ItsTrue("the key set stays", outcome.KeySetKept);
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    [UnitTest]
+    public void RecordAMoveThatAlreadyHappened()
+    {
+        When.A<HandoverFixture>("settles a recovery whose rotation went through but was not recorded", new HandoverFixture(nameof(RecordAMoveThatAlreadyHappened)), (fixture) =>
+        {
+            SyntheticAuthenticator lost = new SyntheticAuthenticator();
+            SyntheticAuthenticator heir = new SyntheticAuthenticator();
+            string lostId = fixture.SignUp(lost);
+            string heirId = fixture.Add(heir);
+            fixture.AgePasskeys();
+            KeySetRecoveryStart start = fixture.Recovery.Begin(Handle, lostId, heirId, null);
+            fixture.Recovery.Complete(Handle, start.RecoveryId, HandoverFixture.AssertionJson(heir, start));
+            fixture.Clock.Advance(fixture.Options.RecoveryDelay);
+            // The rotation a settle makes, without the settle recording it.
+            PendingKeySetRecoveryData row = fixture.Recoveries.Find(Handle, start.RecoveryId!)!;
+            fixture.Registrar.Rotate(PasskeyKeySet.From(fixture.Credentials.FindByCredentialId(heirId)!), Encoding.UTF8.GetBytes(row.AssertionJson));
+            KeySetRecoverySettlement settled = fixture.Recovery.Settle(Handle);
+            PendingKeySetRecoveryData after = fixture.Recoveries.Find(Handle, start.RecoveryId!)!;
+            return new AlreadyMovedOutcome(settled, after, fixture.Credentials.FindByCredentialId(heirId)!.IsRegisteredKeySet, fixture.KeySetIs(heir));
+        })
+        .TheTest
+        .ShouldPass<AlreadyMovedOutcome>((because, outcome) =>
+        {
+            because.ItsTrue("the recovery is recorded as settled, not as changed", outcome.Settled == KeySetRecoverySettlement.Settled && outcome.Row.CompletedUtc is not null && outcome.Row.CancelReason is null);
+            because.ItsTrue("the heir is marked as the key set", outcome.HeirMarked && outcome.MovedToHeir);
         })
         .SoBeHappy()
         .UnlessItFailed();
@@ -602,7 +824,17 @@ public class KeySetRecoveryShould : UnitTestMenuContainer
             bool updated = repository.Update(changed);
             PendingKeySetRecoveryData reread = repository.Find("alice", "r1")!;
             bool updatedMissing = repository.Update(Row("carol", "r9", start));
-            return new StoreOutcome(duplicateRefused, alices.Select(row => row.RecoveryId).ToList(), updated, reread, repository.Find("bob", "r1"), repository.Find("bob", "r2"), updatedMissing);
+            // Forward only: a canceled row stays canceled, and doesn't become completed.
+            PendingKeySetRecoveryData reopened = repository.Find("alice", "r1")!;
+            reopened.CanceledUtc = null;
+            reopened.CancelReason = null;
+            reopened.CompletedUtc = start.AddHours(2);
+            repository.Update(reopened);
+            PendingKeySetRecoveryData stillCanceled = repository.Find("alice", "r1")!;
+            repository.RecordRemovedPasskeyKey("alice", "cred-1", "fp-1");
+            repository.RecordRemovedPasskeyKey("alice", "cred-1", "fp-1");
+            bool removedKeys = repository.WasRemovedPasskeyKey("alice", "fp-1") && !repository.WasRemovedPasskeyKey("bob", "fp-1") && !repository.WasRemovedPasskeyKey("alice", "fp-2");
+            return new StoreOutcome(duplicateRefused, alices.Select(row => row.RecoveryId).ToList(), updated, reread, repository.Find("bob", "r1"), repository.Find("bob", "r2"), updatedMissing, stillCanceled, removedKeys);
         })
         .TheTest
         .ShouldPass<StoreOutcome>((because, outcome) =>
@@ -613,6 +845,8 @@ public class KeySetRecoveryShould : UnitTestMenuContainer
             because.ItsTrue("an update can't rewrite what was proved", outcome.Reread.Anchor == "anchor-r1");
             because.ItsTrue("ids are scoped to the person", outcome.BobsR1 is not null && outcome.BobsR1.IsOpen() && outcome.BobsR2 is null);
             because.ItsTrue("updating a row that doesn't exist does nothing", !outcome.UpdatedMissing);
+            because.ItsTrue("an update can't reopen or complete a canceled row", !outcome.StillCanceled.IsOpen() && outcome.StillCanceled.CancelReason == KeySetRecoveryEnd.Canceled && outcome.StillCanceled.CompletedUtc is null);
+            because.ItsTrue("removed passkey keys are kept per person", outcome.RemovedKeys);
         })
         .SoBeHappy()
         .UnlessItFailed();
@@ -622,7 +856,7 @@ public class KeySetRecoveryShould : UnitTestMenuContainer
     {
         PendingKeySetRecoveryData row = fixture.Recoveries.Find(Handle, start.RecoveryId!)!;
         row.AssertionJson = Encoding.UTF8.GetString(assertion);
-        fixture.Recoveries.Update(row);
+        fixture.Recoveries.RewriteAtRest(row);
     }
 
     /// <summary>Stands in for an administrative re-bind: anchors and verifies only while armed.</summary>
@@ -686,5 +920,19 @@ public class KeySetRecoveryShould : UnitTestMenuContainer
 
     private sealed record ReboundOutcome(KeySetRecoveryRefusal Refusal, int StoredRecoveries, bool HeirKept);
 
-    private sealed record StoreOutcome(bool DuplicateRefused, List<string> AliceIds, bool Updated, PendingKeySetRecoveryData Reread, PendingKeySetRecoveryData? BobsR1, PendingKeySetRecoveryData? BobsR2, bool UpdatedMissing);
+    private sealed record StoreOutcome(bool DuplicateRefused, List<string> AliceIds, bool Updated, PendingKeySetRecoveryData Reread, PendingKeySetRecoveryData? BobsR1, PendingKeySetRecoveryData? BobsR2, bool UpdatedMissing,
+        PendingKeySetRecoveryData StillCanceled, bool RemovedKeys);
+
+    private sealed record FaultOutcome(KeySetRecoverySettlement ProofFault, bool FaultedAtTheProof, bool WaitingAfterProofFault, KeySetRecoverySettlement RegistrarFault, bool FaultedAtTheRegistrar,
+        bool WaitingAfterRegistrarFault, KeySetRecoverySettlement Settled, bool MovedToHeir);
+
+    private sealed record ReboundBeforeBeginOutcome(bool RecoverableWhenOrphaned, bool RecoverableWhenRebound, KeySetRecoveryRefusal Begin, int StoredRecoveries);
+
+    private sealed record ReplayOutcome(bool Proved, bool Canceled, bool BegunAgain, KeySetRecoveryRefusal Replayed, bool FreshProved);
+
+    private sealed record DelayHeldOutcome(bool AnchorsWithAnEarlyEffectiveTime, KeySetRecoverySettlement EarlySettle, bool AnchorsWhenDue, bool AnchorsWithTwoOpen, bool KeySetKept);
+
+    private sealed record ProofRefusedOutcome(KeySetRecoverySettlement Settled, string? Reason, bool KeySetKept);
+
+    private sealed record AlreadyMovedOutcome(KeySetRecoverySettlement Settled, PendingKeySetRecoveryData Row, bool HeirMarked, bool MovedToHeir);
 }

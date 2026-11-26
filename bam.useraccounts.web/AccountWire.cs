@@ -253,6 +253,13 @@ public sealed class SignedInResponse
 
     /// <summary>False when sign-up claimed the handle but the profile could not be written; true otherwise.</summary>
     public bool ProfileCreated { get; set; } = true;
+
+    /// <summary>
+    /// The person's lost-device recovery that is waiting to move the key set, or null.  Set on
+    /// sign-in, when <see cref="NextUrl"/> is then the manage page: a client shows it and offers the
+    /// cancel (<c>keyset/recovery/{id}/cancel</c>).
+    /// </summary>
+    public PendingRecoverySummary? PendingRecovery { get; set; }
 }
 
 /// <summary>Response of <c>passkeys/{id}/handover/begin</c>.</summary>

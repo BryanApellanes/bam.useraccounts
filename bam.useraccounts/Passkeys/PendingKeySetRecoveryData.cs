@@ -60,4 +60,27 @@ public class PendingKeySetRecoveryData : KeyedAuditRepoData
     {
         return CanceledUtc is null && CompletedUtc is null;
     }
+
+    /// <summary>
+    /// Copies onto this stored row only what a recovery may change after it is stored, and only
+    /// forward: an end (cancel, stale) or a completion is recorded once and never cleared or
+    /// rewritten, and nothing that was proved (the heir, the anchor, the assertion, the times) is
+    /// touched.  Both recovery stores update through this, so a canceled recovery can't be reopened
+    /// through <see cref="IKeySetRecoveryRepository.Update"/>.
+    /// </summary>
+    /// <param name="changed">The row as a caller changed it.</param>
+    public void AdvanceFrom(PendingKeySetRecoveryData changed)
+    {
+        ArgumentNullException.ThrowIfNull(changed);
+        if (CanceledUtc is null && CompletedUtc is null && changed.CanceledUtc is not null)
+        {
+            CanceledUtc = changed.CanceledUtc;
+            CancelReason = changed.CancelReason;
+            CanceledByCredentialId = changed.CanceledByCredentialId;
+        }
+        if (CompletedUtc is null && CanceledUtc is null && changed.CompletedUtc is not null)
+        {
+            CompletedUtc = changed.CompletedUtc;
+        }
+    }
 }

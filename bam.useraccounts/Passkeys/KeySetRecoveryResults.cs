@@ -24,7 +24,7 @@ public enum KeySetRecoveryRefusal
     /// <summary>A recovery is already waiting for this person.</summary>
     RecoveryPending,
 
-    /// <summary>The person has no registered key set to recover.</summary>
+    /// <summary>The person has no key set recovery can move: none is registered, or no passkey holds it and it is not the key of a passkey the person removed (an admin rebind or a device key).</summary>
     NoKeySet,
 
     /// <summary>This host has no recovery proof: remove the lost passkey keeping the key set (option A).</summary>
@@ -55,7 +55,7 @@ public static class KeySetRecoveryEnd
     /// <summary>The key set moved some other way before the recovery was due.</summary>
     public const string KeySetChanged = "key-set-changed";
 
-    /// <summary>The registrar refused the rotation at settle (for example, the heir's key is blocklisted).</summary>
+    /// <summary>The rotation was refused at settle: the proof cleanly refused it, or the heir's key is blocklisted or claimed.  A fault never ends a recovery; it waits.</summary>
     public const string Refused = "refused";
 }
 

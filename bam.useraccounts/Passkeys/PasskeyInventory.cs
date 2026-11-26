@@ -1,4 +1,5 @@
 using Bam.Logging;
+using Bam.Protocol.Profile;
 
 namespace Bam.UserAccounts.Passkeys;
 
@@ -28,6 +29,7 @@ public sealed class PasskeyInventory : IPasskeyInventory
 
     private readonly IPasskeyCredentialRepository _credentials;
     private readonly IKeySetHandover? _handover;
+    private readonly IKeySetRecoveryRepository? _recoveries;
 
     /// <summary>Initializes the inventory over passkey custody, with no key-set handover.</summary>
     /// <param name="credentials">Passkey custody.</param>
@@ -40,9 +42,19 @@ public sealed class PasskeyInventory : IPasskeyInventory
     /// <param name="credentials">Passkey custody.</param>
     /// <param name="handover">The key-set handover, or null when the host has none.</param>
     public PasskeyInventory(IPasskeyCredentialRepository credentials, IKeySetHandover? handover)
+        : this(credentials, handover, null)
+    {
+    }
+
+    /// <summary>Initializes the inventory over passkey custody, the key-set handover and recovery custody.</summary>
+    /// <param name="credentials">Passkey custody.</param>
+    /// <param name="handover">The key-set handover, or null when the host has none.</param>
+    /// <param name="recoveries">Recovery custody, which records each removed passkey's key so a later recovery can move only a key set a passkey of the person held; null when the host has none.</param>
+    public PasskeyInventory(IPasskeyCredentialRepository credentials, IKeySetHandover? handover, IKeySetRecoveryRepository? recoveries)
     {
         _credentials = credentials;
         _handover = handover;
+        _recoveries = recoveries;
     }
 
     /// <inheritdoc />
@@ -111,6 +123,9 @@ public sealed class PasskeyInventory : IPasskeyInventory
             {
                 return PasskeyRemoval.KeySetHandoverRequired;
             }
+            // Recorded before the removal: if recording fails nothing is removed, and a record left
+            // by a failed removal still only says what is true, that this was a passkey's key.
+            RecordRemovedKey(_recoveries, credential);
             if (!_credentials.Remove(personHandle, credential.CredentialId))
             {
                 return PasskeyRemoval.NotFound;
@@ -125,6 +140,16 @@ public sealed class PasskeyInventory : IPasskeyInventory
             Log.Info("Passkey {0} of {1} removed", credential.CredentialId, personHandle);
         }
         return PasskeyRemoval.Removed;
+    }
+
+    /// <summary>Records a removed passkey's key in recovery custody, when there is custody and the key has a fingerprint.</summary>
+    internal static void RecordRemovedKey(IKeySetRecoveryRepository? recoveries, PasskeyCredentialData credential)
+    {
+        string? fingerprint = PublicKeyFingerprint.Of(credential.PublicKeyPem);
+        if (recoveries is not null && fingerprint is not null)
+        {
+            recoveries.RecordRemovedPasskeyKey(credential.PersonHandle, credential.CredentialId, fingerprint);
+        }
     }
 
     private PasskeyCredentialData? Owned(string personHandle, string credentialId)

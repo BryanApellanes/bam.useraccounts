@@ -58,7 +58,7 @@ public static class AccountEndpoints
         // Lost-device recovery (bam.protocol#85): begin and complete run a ceremony, like the handover.
         group.MapPost("/keyset/recovery/begin", BeginRecoveryAsync).RequireAuthorization(AccountWebRegistration.Policy).RequireRateLimiting(AccountRateLimitOptions.AnonymousPolicy);
         group.MapPost("/keyset/recovery/complete", CompleteRecoveryAsync).RequireAuthorization(AccountWebRegistration.Policy).RequireRateLimiting(AccountRateLimitOptions.AnonymousPolicy);
-        group.MapPost("/keyset/recovery/{recoveryId}/cancel", CancelRecovery).RequireAuthorization(AccountWebRegistration.Policy);
+        group.MapPost("/keyset/recovery/{recoveryId}/cancel", CancelRecovery).RequireAuthorization(AccountWebRegistration.Policy).RequireRateLimiting(AccountRateLimitOptions.AnonymousPolicy);
         group.MapPost("/profile", CompleteProfileAsync).RequireAuthorization(AccountWebRegistration.Policy);
         return group;
     }
@@ -181,13 +181,18 @@ public static class AccountEndpoints
             return Refusal(StatusCodes.Status400BadRequest, AccountErrorCodes.SignInFailed, site.Strings.SignInFailedMessage);
         }
         await session.SignInAsync(context, principal);
+        string handle = AccountPrincipal.Handle(principal)!;
         // A due recovery moves the key set on the person's next sign-in; it never fails the sign-in.
-        recovery.Settle(AccountPrincipal.Handle(principal)!);
+        recovery.Settle(handle);
+        // A recovery still waiting is shown at every sign-in, and the person lands on the manage
+        // page, where they can cancel it: the delay protects them only if they see it.
+        PendingKeySetRecoveryData? pending = recovery.Pending(handle);
         return Json(new SignedInResponse
         {
-            Handle = AccountPrincipal.Handle(principal)!,
+            Handle = handle,
             DisplayName = AccountPrincipal.DisplayName(principal)!,
-            NextUrl = AccountRoutes.LocalOr(body.ReturnUrl, site.DefaultReturnUrl)
+            NextUrl = pending is null ? AccountRoutes.LocalOr(body.ReturnUrl, site.DefaultReturnUrl) : AccountRoutes.Manage,
+            PendingRecovery = pending is null ? null : PendingRecoverySummary.Of(pending)
         });
     }
 

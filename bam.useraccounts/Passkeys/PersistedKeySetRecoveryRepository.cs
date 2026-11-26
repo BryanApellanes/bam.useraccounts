@@ -21,6 +21,7 @@ public sealed class PersistedKeySetRecoveryRepository : IKeySetRecoveryRepositor
     {
         _repository = repository;
         _repository.AddType<PendingKeySetRecoveryData>();
+        _repository.AddType<RemovedPasskeyKeyData>();
     }
 
     /// <inheritdoc />
@@ -67,14 +68,46 @@ public sealed class PersistedKeySetRecoveryRepository : IKeySetRecoveryRepositor
             {
                 return false;
             }
-            // Only the fields a recovery may change after it is stored.
-            stored.CanceledUtc = recovery.CanceledUtc;
-            stored.CancelReason = recovery.CancelReason;
-            stored.CanceledByCredentialId = recovery.CanceledByCredentialId;
-            stored.CompletedUtc = recovery.CompletedUtc;
+            // Only the fields a recovery may change after it is stored, and only forward.
+            stored.AdvanceFrom(recovery);
             _repository.Update(stored);
             return true;
         }
+    }
+
+    /// <inheritdoc />
+    public void RecordRemovedPasskeyKey(string personHandle, string credentialId, string keyFingerprint)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(personHandle);
+        ArgumentException.ThrowIfNullOrWhiteSpace(keyFingerprint);
+        lock (_lock)
+        {
+            if (FindRemovedKey(personHandle, keyFingerprint) is not null)
+            {
+                return;
+            }
+            _repository.Create(new RemovedPasskeyKeyData { PersonHandle = personHandle, KeyFingerprint = keyFingerprint, CredentialId = credentialId ?? string.Empty, RemovedUtc = DateTime.UtcNow });
+        }
+    }
+
+    /// <inheritdoc />
+    public bool WasRemovedPasskeyKey(string personHandle, string keyFingerprint)
+    {
+        if (string.IsNullOrWhiteSpace(personHandle) || string.IsNullOrWhiteSpace(keyFingerprint))
+        {
+            return false;
+        }
+        lock (_lock)
+        {
+            return FindRemovedKey(personHandle, keyFingerprint) is not null;
+        }
+    }
+
+    private RemovedPasskeyKeyData? FindRemovedKey(string personHandle, string keyFingerprint)
+    {
+        Dictionary<string, object> query = new Dictionary<string, object> { { nameof(RemovedPasskeyKeyData.PersonHandle), personHandle } };
+        return _repository.Query<RemovedPasskeyKeyData>(query)
+            .FirstOrDefault(row => string.Equals(row.PersonHandle, personHandle, StringComparison.Ordinal) && string.Equals(row.KeyFingerprint, keyFingerprint, StringComparison.Ordinal));
     }
 
     private PendingKeySetRecoveryData? FindRow(string personHandle, string recoveryId)

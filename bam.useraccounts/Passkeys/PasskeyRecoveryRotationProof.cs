@@ -17,7 +17,13 @@ namespace Bam.UserAccounts.Passkeys;
 /// <see cref="PendingKeySetRecoveryData"/> recorded against exactly that key set (its
 /// <see cref="KeySetRotationPayload.AnchorSha256"/>).  A key set with no due recovery, another
 /// handle's key set, and any proposed key set are not anchored, so this proof never widens who can
-/// rotate a key set that has no waiting recovery.
+/// rotate a key set that has no waiting recovery.  Which key sets can get a recovery is decided by
+/// <see cref="KeySetRecovery.Begin"/>: only one a passkey of the person holds, or one holding exactly
+/// the key of a passkey the person removed.  An admin rebind or a device key is never recoverable.
+/// </para>
+/// <para>
+/// The recovery store is trusted for what was proved and when; the proof still holds the stored
+/// effective time to at least the begin time plus <see cref="PasskeyOptions.RecoveryDelay"/>.
 /// </para>
 /// <para>
 /// The proof bytes are the heir's assertion exactly as <see cref="KeySetRecovery"/> stored it.  The
@@ -34,26 +40,46 @@ public sealed class PasskeyRecoveryRotationProof : IKeySetRotationProof
     /// <summary>The name recorded when this proof authorizes a rotation (<c>RevokedBy = rotation:passkey-recovery</c>).</summary>
     public const string ProofName = "passkey-recovery";
 
-    private readonly IKeySetRecoveryRepository _recoveries;
-    private readonly IPasskeyCredentialRepository _credentials;
-    private readonly PasskeyAssertionVerifier _verifier;
-    private readonly TimeProvider _clock;
+    private readonly Func<IKeySetRecoveryRepository> _recoveries;
+    private readonly Func<IPasskeyCredentialRepository> _credentials;
+    private readonly Func<PasskeyAssertionVerifier> _verifier;
+    private readonly Func<TimeProvider> _clock;
+    private readonly Func<PasskeyOptions> _options;
 
-    /// <summary>Initializes the proof.</summary>
+    /// <summary>Initializes the proof over fixed collaborators.</summary>
     /// <param name="recoveries">Recovery custody.</param>
     /// <param name="credentials">Passkey custody.</param>
     /// <param name="verifier">Verifies the stored assertion; it never records a sign counter.</param>
     /// <param name="clock">The clock recoveries are judged due by; the same one <see cref="KeySetRecovery"/> uses.</param>
-    public PasskeyRecoveryRotationProof(IKeySetRecoveryRepository recoveries, IPasskeyCredentialRepository credentials, PasskeyAssertionVerifier verifier, TimeProvider clock)
+    /// <param name="options">The relying-party policy; its <see cref="PasskeyOptions.RecoveryDelay"/> is the least a recovery waits.</param>
+    public PasskeyRecoveryRotationProof(IKeySetRecoveryRepository recoveries, IPasskeyCredentialRepository credentials, PasskeyAssertionVerifier verifier, TimeProvider clock, PasskeyOptions options)
+        : this(Fixed(recoveries), Fixed(credentials), Fixed(verifier), Fixed(clock), Fixed(options))
+    {
+    }
+
+    /// <summary>
+    /// Initializes the proof over collaborators resolved on each use, so a host that binds its own
+    /// recovery custody or clock after registering the proof still has the proof and
+    /// <see cref="KeySetRecovery"/> read the same ones.
+    /// </summary>
+    /// <param name="recoveries">Resolves recovery custody.</param>
+    /// <param name="credentials">Resolves passkey custody.</param>
+    /// <param name="verifier">Resolves the assertion verifier.</param>
+    /// <param name="clock">Resolves the clock.</param>
+    /// <param name="options">Resolves the relying-party policy.</param>
+    public PasskeyRecoveryRotationProof(Func<IKeySetRecoveryRepository> recoveries, Func<IPasskeyCredentialRepository> credentials, Func<PasskeyAssertionVerifier> verifier,
+        Func<TimeProvider> clock, Func<PasskeyOptions> options)
     {
         ArgumentNullException.ThrowIfNull(recoveries);
         ArgumentNullException.ThrowIfNull(credentials);
         ArgumentNullException.ThrowIfNull(verifier);
         ArgumentNullException.ThrowIfNull(clock);
+        ArgumentNullException.ThrowIfNull(options);
         _recoveries = recoveries;
         _credentials = credentials;
         _verifier = verifier;
         _clock = clock;
+        _options = options;
     }
 
     /// <inheritdoc />
@@ -62,7 +88,16 @@ public sealed class PasskeyRecoveryRotationProof : IKeySetRotationProof
     /// <inheritdoc />
     public bool Anchors(PublicKeySetData current)
     {
-        return DueRecovery(current) is not null;
+        // Never throws: Anchors is asked outside the registrar's try block.
+        try
+        {
+            return DueRecovery(current) is not null;
+        }
+        catch (Exception e)
+        {
+            Log.Warn("Passkey recovery proof could not read the recoveries of {0}: {1}", PasskeyText.Printable(current?.KeySetHandle), PasskeyText.Printable(e.Message, PasskeyVerification.MaxDetailLength));
+            return false;
+        }
     }
 
     /// <inheritdoc />
@@ -82,7 +117,7 @@ public sealed class PasskeyRecoveryRotationProof : IKeySetRotationProof
         {
             return Failed("The proof is not the due recovery's assertion.");
         }
-        PasskeyCredentialData? heir = _credentials.FindByCredentialId(recovery.HeirCredentialId);
+        PasskeyCredentialData? heir = _credentials().FindByCredentialId(recovery.HeirCredentialId);
         if (heir is null || heir.Pending || !string.Equals(heir.PersonHandle, current.KeySetHandle, StringComparison.Ordinal)
             || !string.Equals(PublicKeyFingerprint.Of(heir.PublicKeyPem), recovery.HeirKeyFingerprint, StringComparison.Ordinal))
         {
@@ -111,7 +146,7 @@ public sealed class PasskeyRecoveryRotationProof : IKeySetRotationProof
             Algorithm = heir.Algorithm,
             SignCount = 0
         };
-        PasskeyVerification verification = _verifier.Verify(response, PasskeyKeySetRotationProof.Challenge(current, proposed), counterless);
+        PasskeyVerification verification = _verifier().Verify(response, PasskeyKeySetRotationProof.Challenge(current, proposed), counterless);
         if (!verification.Success || verification.AuthenticatorData is null)
         {
             return Failed("The stored assertion did not verify: " + verification.Failure);
@@ -130,30 +165,38 @@ public sealed class PasskeyRecoveryRotationProof : IKeySetRotationProof
     }
 
     // The open recovery of the key set's own handle that is due and was begun from exactly this key
-    // set.  Never throws: Anchors is asked outside the registrar's try block.
+    // set.  A storage fault throws, so Verify reports a fault rather than a refusal (Anchors catches
+    // it).  More than one open recovery anchors nothing: within a process there is never more than
+    // one, and across processes the banner, the cancel and the proof must act on the same row.  The
+    // stored effective time is held to the begin time plus the delay, so a row edited at rest with an
+    // earlier one doesn't skip the wait.
     private PendingKeySetRecoveryData? DueRecovery(PublicKeySetData? keySet)
     {
         if (keySet is null || string.IsNullOrWhiteSpace(keySet.KeySetHandle))
         {
             return null;
         }
-        try
+        if (string.IsNullOrEmpty(keySet.PublicRsaKey) && string.IsNullOrEmpty(keySet.PublicEccKey))
         {
-            if (string.IsNullOrEmpty(keySet.PublicRsaKey) && string.IsNullOrEmpty(keySet.PublicEccKey))
-            {
-                return null;
-            }
-            string anchor = KeySetRotationPayload.AnchorSha256(keySet);
-            DateTime now = _clock.GetUtcNow().UtcDateTime;
-            return _recoveries.FindByHandle(keySet.KeySetHandle)
-                .FirstOrDefault(recovery => recovery.IsOpen() && recovery.EffectiveUtc <= now
-                    && string.Equals(recovery.Anchor, anchor, StringComparison.Ordinal));
-        }
-        catch (Exception e)
-        {
-            Log.Warn("Passkey recovery proof could not read the recoveries of {0}: {1}", PasskeyText.Printable(keySet.KeySetHandle), PasskeyText.Printable(e.Message, PasskeyVerification.MaxDetailLength));
             return null;
         }
+        List<PendingKeySetRecoveryData> open = _recoveries().FindByHandle(keySet.KeySetHandle).Where(recovery => recovery.IsOpen()).ToList();
+        if (open.Count != 1)
+        {
+            return null;
+        }
+        PendingKeySetRecoveryData only = open[0];
+        string anchor = KeySetRotationPayload.AnchorSha256(keySet);
+        DateTime now = _clock().GetUtcNow().UtcDateTime;
+        DateTime earliest = only.BeganUtc.Add(_options().RecoveryDelay);
+        bool due = only.EffectiveUtc >= earliest && only.EffectiveUtc <= now;
+        return due && string.Equals(only.Anchor, anchor, StringComparison.Ordinal) ? only : null;
+    }
+
+    private static Func<T> Fixed<T>(T value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        return () => value;
     }
 
     private static SignatureVerification Failed(string message)

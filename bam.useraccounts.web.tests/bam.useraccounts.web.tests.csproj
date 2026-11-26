@@ -33,6 +33,7 @@
     <Compile Include="..\bam.useraccounts.tests\TestClasses\SignUpFixture.cs" Link="TestClasses\Shared\SignUpFixture.cs" />
     <Compile Include="..\bam.useraccounts.tests\TestClasses\HandoverFixture.cs" Link="TestClasses\Shared\HandoverFixture.cs" />
     <Compile Include="..\bam.useraccounts.tests\TestClasses\ManualClock.cs" Link="TestClasses\Shared\ManualClock.cs" />
+    <Compile Include="..\bam.useraccounts.tests\TestClasses\FaultingKeySetRecoveryRepository.cs" Link="TestClasses\Shared\FaultingKeySetRecoveryRepository.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -54,7 +54,8 @@ public class KeySetRecoveryEndpointsShould : UnitTestMenuContainer
                     AccountReply firstSessionAfter = host.Get("/account/passkeys", firstSession);
                     PasskeyListResponse pendingList = host.Get("/account/passkeys", secondSession).As<PasskeyListResponse>();
                     string page = host.Get("/account", secondSession).Body;
-                    bool pageShowsTheBanner = page.Contains("account-recovery-pending", StringComparison.Ordinal) && page.Contains("data-account-action=\"cancelrecovery\"", StringComparison.Ordinal);
+                    bool pageShowsTheBanner = page.Contains("account-recovery-pending", StringComparison.Ordinal) && page.Contains("data-account-action=\"cancelrecovery\"", StringComparison.Ordinal)
+                        && page.Contains(host.Site.Strings.RecoveryPendingTitle, StringComparison.Ordinal);
                     AccountReply secondBegin = host.Post(Begin, new RecoveryBeginRequest(), secondSession);
                     AccountReply handoverWhilePending = host.Post("/account/passkeys/" + secondId + "/handover/begin", new HandoverBeginRequest(), secondSession);
                     bool keySetStillFirst = KeySetIs(host, handle, first);
@@ -124,15 +125,18 @@ public class KeySetRecoveryEndpointsShould : UnitTestMenuContainer
                     clock.Advance(TimeSpan.FromDays(8));
                     RecoveryBeginResponse start = host.Post(Begin, new RecoveryBeginRequest(), secondSession).As<RecoveryBeginResponse>();
                     AccountReply completed = host.Post(Complete, Proof(second, start), secondSession);
+                    SignedInResponse signedInWhileWaiting = host.SignIn(third, "alice", "/app/start").As<SignedInResponse>();
                     string cancelPath = "/account/keyset/recovery/" + start.RecoveryId + "/cancel";
                     AccountReply noHeader = host.Post(cancelPath, new RenameRequest(), thirdSession, withHeader: false);
                     AccountReply canceled = host.Post(cancelPath, new RenameRequest(), thirdSession);
                     PasskeyListResponse afterCancel = host.Get("/account/passkeys", secondSession).As<PasskeyListResponse>();
                     AccountReply again = host.Post(cancelPath, new RenameRequest(), thirdSession);
+                    SignedInResponse signedInAfterCancel = host.SignIn(third, "alice", "/app/start").As<SignedInResponse>();
                     clock.Advance(TimeSpan.FromDays(4));
                     host.Get("/account/passkeys", secondSession);
                     string handle = host.Fixture.Passkeys.Credentials.FindByCredentialId(second.CredentialIdBase64Url)!.PersonHandle;
-                    return new CancelOutcome(keepCopyPointsAtRecovery, kept, recoverable, pageOffersRecovery, completed, noHeader, canceled, afterCancel, again, KeySetIs(host, handle, first));
+                    return new CancelOutcome(keepCopyPointsAtRecovery, kept, recoverable, pageOffersRecovery, completed, noHeader, canceled, afterCancel, again, KeySetIs(host, handle, first),
+                        start.RecoveryId, signedInWhileWaiting, signedInAfterCancel);
                 }
                 finally
                 {
@@ -152,6 +156,10 @@ public class KeySetRecoveryEndpointsShould : UnitTestMenuContainer
                 because.ItsTrue("nothing waits after the cancel, and recovery is offered again", outcome.AfterCancel.PendingRecovery is null && outcome.AfterCancel.KeySetRecoverable);
                 because.ItsTrue($"a second cancel is not found ({outcome.Again.Status})", outcome.Again.Status == HttpStatusCode.NotFound);
                 because.ItsTrue("a canceled recovery never moves the key", outcome.KeySetKept);
+                because.ItsTrue("signing in while it waits shows it and goes to the manage page",
+                    outcome.SignedInWhileWaiting.PendingRecovery?.Id == outcome.RecoveryId && outcome.SignedInWhileWaiting.NextUrl == "/account");
+                because.ItsTrue("once canceled, sign-in shows nothing and keeps the return URL",
+                    outcome.SignedInAfterCancel.PendingRecovery is null && outcome.SignedInAfterCancel.NextUrl == "/app/start");
             })
             .SoBeHappy()
             .UnlessItFailed();
@@ -330,7 +338,8 @@ public class KeySetRecoveryEndpointsShould : UnitTestMenuContainer
         bool KeySetIsSecond, AccountReply CancelAfterSettle, string SecondId);
 
     private sealed record CancelOutcome(bool KeepCopyPointsAtRecovery, AccountReply Kept, PasskeyListResponse Recoverable, bool PageOffersRecovery, AccountReply Completed, AccountReply NoHeader,
-        AccountReply Canceled, PasskeyListResponse AfterCancel, AccountReply Again, bool KeySetKept);
+        AccountReply Canceled, PasskeyListResponse AfterCancel, AccountReply Again, bool KeySetKept,
+        string RecoveryId, SignedInResponse SignedInWhileWaiting, SignedInResponse SignedInAfterCancel);
 
     private sealed record RuleOutcome(AccountReply RemovesRequired, AccountReply NotKeySet, AccountReply InvalidHeir, AccountReply NotFound, AccountReply UnknownId, AccountReply NoBody, AccountReply SignedOut);
 

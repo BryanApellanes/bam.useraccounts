@@ -144,7 +144,16 @@ public sealed class AccountStrings
     public string RecoveryConfirmation { get; set; } = "Move your account key to this passkey? It moves after a waiting period, and any of your signed-in devices can cancel it until then.";
 
     /// <summary>The banner while a recovery waits.  <c>{0}</c> is the heir passkey's name, <c>{1}</c> the date the key moves.</summary>
-    public string RecoveryPendingBanner { get; set; } = "Your account key moves to {0} on {1}. If you didn't start this, cancel it.";
+    public string RecoveryPendingBanner { get; set; } = "Your account key moves to {0} on {1}. Until then you can cancel it here or on any device you're signed in on. If you didn't start this, cancel it now.";
+
+    /// <summary>The heading of the banner while a recovery waits (the native app uses the same words).</summary>
+    public string RecoveryPendingTitle { get; set; } = "Your account key is moving";
+
+    /// <summary>How the banner names an heir that is no longer in the person's passkey list.</summary>
+    public string RecoveryHeirNotListed { get; set; } = "a passkey that isn't in your list";
+
+    /// <summary>The heading of the note when no passkey holds the account key and it can be recovered.</summary>
+    public string RecoveryRecoverableTitle { get; set; } = "No passkey holds your account key";
 
     /// <summary>The button that cancels a waiting recovery.</summary>
     public string CancelRecovery { get; set; } = "Cancel the move";
