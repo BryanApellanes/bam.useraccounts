@@ -25,7 +25,10 @@ public static class PasskeysServiceRegistration
     /// <see cref="IConfirmationChallengeRepository"/>, <see cref="IPasskeyCredentialRepository"/> or
     /// <see cref="IDetachedSignatureVerifier"/> binding is respected; otherwise
     /// <see cref="PersistedConfirmationChallengeRepository"/>, <see cref="PersistedPasskeyCredentialRepository"/>
-    /// and <see cref="DetachedSignatureVerifier"/> are bound as singletons.  The persisted
+    /// and <see cref="DetachedSignatureVerifier"/> are bound as singletons.  Recovery custody
+    /// (<see cref="IKeySetRecoveryRepository"/>) is likewise respected, else
+    /// <see cref="PersistedKeySetRecoveryRepository"/> when the registry has an <c>IRepository</c>,
+    /// else <see cref="InMemoryKeySetRecoveryRepository"/> with a warning.  The persisted
     /// repositories are constructed at registration, so the host registry must already provide
     /// <c>IRepository</c>, and must provide <c>IPublicKeySetRegistrar</c>, <c>IProfileRepository</c>
     /// and <c>ICertificateManager</c> by the time the ceremony and confirmation are resolved.
@@ -54,6 +57,21 @@ public static class PasskeysServiceRegistration
         {
             registry.For<IPasskeyCredentialRepository>().UseSingleton<PersistedPasskeyCredentialRepository>();
         }
+        if (!registry.Contains<IKeySetRecoveryRepository>())
+        {
+            if (registry.Contains<Bam.Data.Repositories.IRepository>())
+            {
+                registry.For<IKeySetRecoveryRepository>().UseSingleton<PersistedKeySetRecoveryRepository>();
+            }
+            else
+            {
+                // A host that brought its own custody and no store: recoveries then live in memory. A
+                // restart loses a waiting recovery, which fails safe (the key set doesn't move; the
+                // person starts again), but the host should bind durable custody.
+                Bam.Logging.Log.Warn("AddPasskeys: no IRepository and no IKeySetRecoveryRepository bound; lost-device recoveries are kept in memory and a restart cancels them.");
+                registry.For<IKeySetRecoveryRepository>().UseSingleton(new InMemoryKeySetRecoveryRepository());
+            }
+        }
 
         registry
             .For<PasskeyRegistrationVerifier>().Use<PasskeyRegistrationVerifier>()
@@ -71,13 +89,24 @@ public static class PasskeysServiceRegistration
             registry.For<IAccountConfirmation>().Use<PasskeyAccountConfirmation>();
         }
 
-        // The handover is always bound; it is available only once a passkey rotation proof is trusted.
+        // The handover and the recovery are always bound; each is available only once its rotation
+        // proofs are trusted (AddPasskeyKeySetRotation).
+        registry.For<IKeySetRecovery>().Use<KeySetRecovery>(reg => new KeySetRecovery(
+            reg.Get<IPasskeyCredentialRepository>(),
+            reg.Get<IKeySetRecoveryRepository>(),
+            reg.Get<IPublicKeySetRegistrar>(),
+            reg.Contains<KeySetRotationProofs>() ? reg.Get<KeySetRotationProofs>() : null,
+            reg.Get<IConfirmationChallengeRepository>(),
+            () => reg.Get<PasskeyCeremony>(),
+            reg.Get<PasskeyOptions>(),
+            Clock(reg)));
         registry.For<IKeySetHandover>().Use<KeySetHandover>(reg => new KeySetHandover(
             reg.Get<IPasskeyCredentialRepository>(),
             reg.Get<IPublicKeySetRegistrar>(),
             reg.Contains<KeySetRotationProofs>() ? reg.Get<KeySetRotationProofs>() : null,
             reg.Get<IConfirmationChallengeRepository>(),
-            reg.Get<PasskeyOptions>()));
+            reg.Get<PasskeyOptions>(),
+            reg.Get<IKeySetRecovery>()));
         if (registry.Contains<KeySetRotationProofs>())
         {
             registry.AddPasskeyKeySetRotation();
@@ -87,13 +116,15 @@ public static class PasskeysServiceRegistration
     }
 
     /// <summary>
-    /// Trusts <see cref="PasskeyKeySetRotationProof"/> for key-set rotation (bam.useraccounts#20):
-    /// adds it to the host's <see cref="KeySetRotationProofs"/>, which makes
-    /// <see cref="IKeySetHandover"/> available.  <see cref="AddPasskeys"/> calls this when the proof
+    /// Trusts <see cref="PasskeyKeySetRotationProof"/> for key-set rotation (bam.useraccounts#20)
+    /// and <see cref="PasskeyRecoveryRotationProof"/> for lost-device recovery (bam.protocol#85):
+    /// adds them to the host's <see cref="KeySetRotationProofs"/>, which makes
+    /// <see cref="IKeySetHandover"/> and <see cref="IKeySetRecovery"/> available.  Recovery uses the
+    /// registry's <see cref="TimeProvider"/> when it has one, else the system clock.  <see cref="AddPasskeys"/> calls this when the proof
     /// list is already registered (the profile repository registration, for example
     /// <c>AddEncryptedProfileRepository</c>, registers it); a host that registers the profile
     /// repository after <see cref="AddPasskeys"/> calls this itself afterwards.  Calling it twice
-    /// adds the proof once.
+    /// adds each proof once.
     /// </summary>
     /// <param name="registry">The host registry, with <see cref="AddPasskeys"/> applied.</param>
     /// <returns>The registry.</returns>
@@ -106,12 +137,20 @@ public static class PasskeysServiceRegistration
             throw new InvalidOperationException("AddPasskeyKeySetRotation needs AddPasskeys and a registered KeySetRotationProofs (the profile repository registration).");
         }
         KeySetRotationProofs proofs = registry.Get<KeySetRotationProofs>();
-        if (proofs.All.Any(proof => proof is PasskeyKeySetRotationProof))
+        if (!proofs.All.Any(proof => proof is PasskeyKeySetRotationProof))
         {
-            return registry;
+            // The ceremony is resolved per rotation: it depends on the registrar, which depends on this list.
+            proofs.Add(new PasskeyKeySetRotationProof(registry.Get<IPasskeyCredentialRepository>(), () => registry.Get<PasskeyCeremony>()));
         }
-        // The ceremony is resolved per rotation: it depends on the registrar, which depends on this list.
-        proofs.Add(new PasskeyKeySetRotationProof(registry.Get<IPasskeyCredentialRepository>(), () => registry.Get<PasskeyCeremony>()));
+        if (!proofs.All.Any(proof => proof is PasskeyRecoveryRotationProof) && registry.Contains<IKeySetRecoveryRepository>())
+        {
+            proofs.Add(new PasskeyRecoveryRotationProof(registry.Get<IKeySetRecoveryRepository>(), registry.Get<IPasskeyCredentialRepository>(), registry.Get<PasskeyAssertionVerifier>(), Clock(registry)));
+        }
         return registry;
+    }
+
+    private static TimeProvider Clock(ServiceRegistry registry)
+    {
+        return registry.Contains<TimeProvider>() ? registry.Get<TimeProvider>() : TimeProvider.System;
     }
 }

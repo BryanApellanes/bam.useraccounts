@@ -19,20 +19,31 @@ public sealed class HandoverFixture
 {
     public const string Handle = "person-abc";
 
-    public HandoverFixture(string testName, bool trustPasskeyProof = true)
+    public HandoverFixture(string testName, bool trustPasskeyProof = true, bool trustRecoveryProof = true, TimeSpan? minimumRotationInterval = null)
     {
         Options = PasskeyFixture.DefaultOptions();
+        Clock = new ManualClock();
         Challenges = new InMemoryConfirmationChallengeRepository();
         Credentials = new InMemoryPasskeyCredentialRepository();
+        Recoveries = new InMemoryKeySetRecoveryRepository();
         Proofs = KeySetRotationProofChain.DefaultProofs();
-        Registrar = new PublicKeySetRegistrar(CreateObjectDataRepository(testName), new KeySetRotationProofChain(Proofs));
+        ObjectDataRepository store = CreateObjectDataRepository(testName);
+        Store = store;
+        KeySetRotationPolicy policy = minimumRotationInterval is TimeSpan interval ? new KeySetRotationPolicy(interval, Clock) : KeySetRotationPolicy.None;
+        Registrar = new PublicKeySetRegistrar(store, new KeySetRotationProofChain(Proofs), new PublicKeySetResolver(store), policy);
         Ceremony = new PasskeyCeremony(Options, Challenges, Credentials, new PasskeyRegistrationVerifier(Options), new PasskeyAssertionVerifier(Options, new DetachedSignatureVerifier()), Registrar);
         Proof = new PasskeyKeySetRotationProof(Credentials, Ceremony);
+        RecoveryProof = new PasskeyRecoveryRotationProof(Recoveries, Credentials, new PasskeyAssertionVerifier(Options, new DetachedSignatureVerifier()), Clock);
         if (trustPasskeyProof)
         {
             Proofs.Add(Proof);
         }
-        Handover = new KeySetHandover(Credentials, Registrar, Proofs, Challenges, Options);
+        if (trustRecoveryProof)
+        {
+            Proofs.Add(RecoveryProof);
+        }
+        Recovery = new KeySetRecovery(Credentials, Recoveries, Registrar, Proofs, Challenges, () => Ceremony, Options, Clock);
+        Handover = new KeySetHandover(Credentials, Registrar, Proofs, Challenges, Options, Recovery);
         Inventory = new PasskeyInventory(Credentials, Handover);
     }
 
@@ -45,6 +56,23 @@ public sealed class HandoverFixture
     public PasskeyKeySetRotationProof Proof { get; }
     public KeySetHandover Handover { get; }
     public PasskeyInventory Inventory { get; }
+    public ManualClock Clock { get; }
+    public ObjectDataRepository Store { get; }
+    public InMemoryKeySetRecoveryRepository Recoveries { get; }
+    public PasskeyRecoveryRotationProof RecoveryProof { get; }
+    public KeySetRecovery Recovery { get; }
+
+    /// <summary>Moves the clock past the age gate, so passkeys registered now can recover.</summary>
+    public void AgePasskeys()
+    {
+        Clock.Advance(Options.RecoveryCredentialAge + TimeSpan.FromMinutes(1));
+    }
+
+    /// <summary>The assertion JSON the authenticator makes over a begun recovery's challenge.</summary>
+    public static byte[] AssertionJson(SyntheticAuthenticator authenticator, KeySetRecoveryStart start)
+    {
+        return AssertionJson(authenticator, Base64UrlEncoder.Default.Decode(start.Options!.Challenge));
+    }
 
     /// <summary>Signs up with the authenticator: its passkey becomes the handle's key set.</summary>
     public string SignUp(SyntheticAuthenticator authenticator, string handle = Handle)

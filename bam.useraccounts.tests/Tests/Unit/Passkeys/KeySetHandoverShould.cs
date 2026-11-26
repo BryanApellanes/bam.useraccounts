@@ -254,7 +254,18 @@ public class KeySetHandoverShould : UnitTestMenuContainer
             // Hold the lock a handover completes under, let the removal of the heir reach it, then
             // complete the handover: the removal must decide against the key set the handover left.
             PasskeyRemoval raced = PasskeyRemoval.NotFound;
-            Thread removal = new Thread(() => raced = fixture.Inventory.Remove(Handle, secondId));
+            Exception? removalFault = null;
+            Thread removal = new Thread(() =>
+            {
+                try
+                {
+                    raced = fixture.Inventory.Remove(Handle, secondId);
+                }
+                catch (Exception e)
+                {
+                    removalFault = e;
+                }
+            });
             KeySetHandoverResult done;
             bool removalWaited;
             lock (PasskeyInventory.RemovalLock)
@@ -265,13 +276,14 @@ public class KeySetHandoverShould : UnitTestMenuContainer
             }
             removal.Join();
 
-            return new RaceOutcome(removalWaited, done, raced, fixture.Credentials.FindByCredentialId(secondId) is not null, fixture.KeySetIs(second));
+            return new RaceOutcome(removalWaited, done, raced, removalFault, fixture.Credentials.FindByCredentialId(secondId) is not null, fixture.KeySetIs(second));
         })
         .TheTest
         .ShouldPass<RaceOutcome>((because, outcome) =>
         {
             because.ItsTrue("the removal reached the lock while the handover held it", outcome.RemovalWaited);
             because.ItsTrue("the handover completes", outcome.Done.Success);
+            because.ItsTrue($"the removal thread did not throw ({outcome.RemovalFault?.GetType().Name})", outcome.RemovalFault is null);
             because.ItsTrue($"removing the heir that has just become the key set asks for a handover ({outcome.Raced})", outcome.Raced == PasskeyRemoval.KeySetHandoverRequired);
             because.ItsTrue("the heir is still there and holds the key set", outcome.HeirKept && outcome.KeySetIsTheHeir);
         })
@@ -417,7 +429,7 @@ public class KeySetHandoverShould : UnitTestMenuContainer
 
     private sealed record KeepOutcome(PasskeyRemoval Removal, bool Gone, bool KeySetKept, KeySetHandoverRefusal NoHandover, PasskeyRemoval Last);
 
-    private sealed record RaceOutcome(bool RemovalWaited, KeySetHandoverResult Done, PasskeyRemoval Raced, bool HeirKept, bool KeySetIsTheHeir);
+    private sealed record RaceOutcome(bool RemovalWaited, KeySetHandoverResult Done, PasskeyRemoval Raced, Exception? RemovalFault, bool HeirKept, bool KeySetIsTheHeir);
 
     private sealed record PendingExpiryOutcome(KeySetHandoverRefusal PendingHeir, KeySetHandoverRefusal PendingKeySet, bool Begun, KeySetHandoverRefusal Expired, bool KeySetKept, bool BothKept);
 

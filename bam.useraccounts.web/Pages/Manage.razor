@@ -9,8 +9,10 @@
 @inject IPasskeyInventory Inventory
 @inject IPasskeySignUp SignUp
 @inject IKeySetHandover Handover
+@inject IKeySetRecovery Recovery
+@inject Bam.Protocol.Data.IPublicKeySetRegistrar Registrar
 
-<AccountLayout Title="@Site.Strings.ManageTitle">
+<AccountLayout Title="@Site.Strings.ManageTitle" RecoveryAvailable="@_recoveryAvailable">
     <p class="account-who">@_displayName <span class="text-muted">@_handle</span></p>
     @if (!_profileComplete)
     {
@@ -30,6 +32,20 @@
     @if (Site.Slots.PostSignUp is not null)
     {
         <DynamicComponent Type="Site.Slots.PostSignUp" />
+    }
+    @if (_pending is not null)
+    {
+        <div class="account-recovery-pending alert alert-warning">
+            <p>@string.Format(CultureInfo.InvariantCulture, Site.Strings.RecoveryPendingBanner, HeirName(_pending), Day(_pending.EffectiveUtc))</p>
+            <PasskeyButton Mode="cancelrecovery" RecoveryId="@_pending.RecoveryId" Label="@Site.Strings.CancelRecovery" CssClass="btn-outline-danger" />
+        </div>
+    }
+    else if (_recoverable)
+    {
+        <div class="account-recovery alert alert-info">
+            <p>@Site.Strings.RecoveryRecoverableNote</p>
+            <PasskeyButton Mode="recover" Label="@Site.Strings.RecoverKeySet" />
+        </div>
     }
     <ul class="account-passkeys list-group">
         @foreach (PasskeyCredentialData passkey in _passkeys)
@@ -80,6 +96,9 @@
     private bool _profileComplete = true;
     private bool _keySetMoves;
     private HashSet<string> _keySetHolders = new HashSet<string>(StringComparer.Ordinal);
+    private bool _recoveryAvailable;
+    private bool _recoverable;
+    private PendingKeySetRecoveryData? _pending;
 
     /// <summary>The current request, supplied by static server rendering.</summary>
     [CascadingParameter]
@@ -98,13 +117,18 @@
         _handle = handle;
         _displayName = AccountPrincipal.DisplayName(HttpContext?.User) ?? handle;
         _currentCredentialId = AccountPrincipal.CredentialId(HttpContext?.User);
+        // A due lost-device recovery (bam.protocol#85) moves the key set on this view, before the list is read.
+        Recovery.Settle(handle);
         _passkeys = Inventory.List(handle).OrderBy(passkey => passkey.CreatedUtc).ToList();
+        _recoveryAvailable = Recovery.IsAvailable;
+        _pending = Recovery.Pending(handle);
+        _recoverable = _pending is null && Recovery.IsRecoverable(handle);
         // Whether removing the key-set passkey moves the key first (#20) or leaves it on record (A).
         _keySetMoves = Handover.IsAvailable;
         // Where the key set can move, the badge follows the registrar (what removing the passkey will
         // actually do), not the stored flag. Resolving on the renderer's dispatcher needs
         // bam.data.objects#13's fix; before it, the object store deadlocked there.
-        _keySetHolders = _keySetMoves ? KeySetHolders(_passkeys) : new HashSet<string>(StringComparer.Ordinal);
+        _keySetHolders = _keySetMoves ? KeySetHolders(handle, _passkeys) : new HashSet<string>(StringComparer.Ordinal);
         // Sign-up writes the profile after the passkey claims the handle. If that write failed,
         // the page asks for the details again rather than writing a profile the person didn't give.
         _profileComplete = SignUp.HasProfile(handle);
@@ -115,18 +139,26 @@
         return _keySetMoves ? _keySetHolders.Contains(passkey.CredentialId) : passkey.IsRegisteredKeySet;
     }
 
-    // When the registrar can't be asked, the stored flags are all there is.
-    private HashSet<string> KeySetHolders(IReadOnlyList<PasskeyCredentialData> passkeys)
+    // The key set is resolved once per view and each passkey tested against it. When the registrar
+    // can't be asked, the stored flags are all there is.
+    private HashSet<string> KeySetHolders(string handle, IReadOnlyList<PasskeyCredentialData> passkeys)
     {
         try
         {
-            return passkeys.Where(passkey => Handover.IsRequiredFor(passkey)).Select(passkey => passkey.CredentialId).ToHashSet(StringComparer.Ordinal);
+            Bam.Protocol.Data.Profile.PublicKeySetData? keySet = Registrar.Resolve(handle);
+            return passkeys.Where(passkey => PasskeyKeySet.IsHeldBy(keySet, passkey)).Select(passkey => passkey.CredentialId).ToHashSet(StringComparer.Ordinal);
         }
         catch (Exception e)
         {
             Bam.Logging.Log.Warn("Manage page could not ask the registrar which passkey holds the key set; showing the stored flags: {0}", e.GetType().Name);
             return passkeys.Where(passkey => passkey.IsRegisteredKeySet).Select(passkey => passkey.CredentialId).ToHashSet(StringComparer.Ordinal);
         }
+    }
+
+    private string HeirName(PendingKeySetRecoveryData pending)
+    {
+        PasskeyCredentialData? heir = _passkeys.FirstOrDefault(passkey => string.Equals(passkey.CredentialId, pending.HeirCredentialId, StringComparison.Ordinal));
+        return string.IsNullOrWhiteSpace(heir?.Name) ? Site.Strings.UnnamedPasskey : heir.Name;
     }
 
     private static string Day(DateTime moment)

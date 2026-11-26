@@ -34,6 +34,18 @@ public sealed class KeySetHandover : IKeySetHandover
     private readonly KeySetRotationProofs? _proofs;
     private readonly IConfirmationChallengeRepository _challenges;
     private readonly PasskeyOptions _options;
+    private readonly IKeySetRecovery? _recovery;
+
+    /// <summary>Initializes the handover over its collaborators, on a host without lost-device recovery.</summary>
+    /// <param name="credentials">Passkey custody.</param>
+    /// <param name="registrar">The key-set registrar.</param>
+    /// <param name="proofs">The host's trusted rotation proofs, or null when the host has none; the handover is available only when they include a <see cref="PasskeyKeySetRotationProof"/>.</param>
+    /// <param name="challenges">Challenge custody; the handover state is kept there, one row per handover.</param>
+    /// <param name="options">The relying-party policy.</param>
+    public KeySetHandover(IPasskeyCredentialRepository credentials, IPublicKeySetRegistrar registrar, KeySetRotationProofs? proofs, IConfirmationChallengeRepository challenges, PasskeyOptions options)
+        : this(credentials, registrar, proofs, challenges, options, null)
+    {
+    }
 
     /// <summary>Initializes the handover over its collaborators.</summary>
     /// <param name="credentials">Passkey custody.</param>
@@ -41,7 +53,8 @@ public sealed class KeySetHandover : IKeySetHandover
     /// <param name="proofs">The host's trusted rotation proofs, or null when the host has none; the handover is available only when they include a <see cref="PasskeyKeySetRotationProof"/>.</param>
     /// <param name="challenges">Challenge custody; the handover state is kept there, one row per handover.</param>
     /// <param name="options">The relying-party policy.</param>
-    public KeySetHandover(IPasskeyCredentialRepository credentials, IPublicKeySetRegistrar registrar, KeySetRotationProofs? proofs, IConfirmationChallengeRepository challenges, PasskeyOptions options)
+    /// <param name="recovery">Lost-device recovery, or null; while a recovery waits, a handover is refused with <see cref="KeySetHandoverRefusal.RecoveryPending"/>.</param>
+    public KeySetHandover(IPasskeyCredentialRepository credentials, IPublicKeySetRegistrar registrar, KeySetRotationProofs? proofs, IConfirmationChallengeRepository challenges, PasskeyOptions options, IKeySetRecovery? recovery)
     {
         ArgumentNullException.ThrowIfNull(credentials);
         ArgumentNullException.ThrowIfNull(registrar);
@@ -52,6 +65,7 @@ public sealed class KeySetHandover : IKeySetHandover
         _proofs = proofs;
         _challenges = challenges;
         _options = options;
+        _recovery = recovery;
     }
 
     /// <inheritdoc />
@@ -71,6 +85,10 @@ public sealed class KeySetHandover : IKeySetHandover
         if (removes is null)
         {
             return Refused(KeySetHandoverRefusal.NotFound);
+        }
+        if (_recovery is not null && _recovery.Pending(personHandle) is not null)
+        {
+            return Refused(KeySetHandoverRefusal.RecoveryPending);
         }
         if (Active(personHandle).Count <= 1)
         {

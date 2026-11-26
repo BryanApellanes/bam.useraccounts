@@ -51,6 +51,26 @@ public sealed class HandoverBeginRequest
     public string? Heir { get; set; }
 }
 
+/// <summary>Body of <c>keyset/recovery/begin</c> (bam.protocol#85).</summary>
+public sealed class RecoveryBeginRequest
+{
+    /// <summary>The lost key-set passkey to take out of sign-in, or null when it was already removed.</summary>
+    public string? Removes { get; set; }
+
+    /// <summary>The passkey to move the key set to, or null for the passkey this session signed in with.</summary>
+    public string? Heir { get; set; }
+}
+
+/// <summary>Body of <c>keyset/recovery/complete</c>.</summary>
+public sealed class RecoveryCompleteRequest
+{
+    /// <summary>The <c>recoveryId</c> returned by <c>keyset/recovery/begin</c>.</summary>
+    public string? RecoveryId { get; set; }
+
+    /// <summary><c>PublicKeyCredential.toJSON()</c> of the assertion the heir made.</summary>
+    public PasskeyAssertionResponse? Credential { get; set; }
+}
+
 /// <summary>Body of <c>passkeys/{id}/handover/complete</c>.</summary>
 public sealed class HandoverCompleteRequest
 {
@@ -175,6 +195,31 @@ public static class AccountErrorCodes
 
     /// <summary>The heir was removed since the handover began.</summary>
     public const string HeirGone = "HeirGone";
+
+    /// <summary>The heir passkey was registered too recently to recover the key set; the body carries <c>eligibleUtc</c>.</summary>
+    public const string HeirTooNew = "HeirTooNew";
+
+    /// <summary>A lost-device recovery is already waiting.</summary>
+    public const string RecoveryPending = "RecoveryPending";
+
+    /// <summary>A passkey still holds the key set: name it in <c>removes</c>, or hand the key set over with it.</summary>
+    public const string RemovesRequired = "RemovesRequired";
+
+    /// <summary>There is no key set to recover.</summary>
+    public const string NoKeySet = "NoKeySet";
+}
+
+/// <summary>The <see cref="AccountErrorCodes.HeirTooNew"/> refusal: the usual error body plus when the heir becomes old enough.</summary>
+public sealed class HeirTooNewError
+{
+    /// <summary>Always <see cref="AccountErrorCodes.HeirTooNew"/>.</summary>
+    public string Error { get; set; } = AccountErrorCodes.HeirTooNew;
+
+    /// <summary>The host's message.</summary>
+    public string Message { get; set; } = string.Empty;
+
+    /// <summary>When the heir can recover the key set.</summary>
+    public DateTime EligibleUtc { get; set; }
 }
 
 /// <summary>Response of <c>registration/begin</c> and <c>additional/begin</c>.</summary>
@@ -220,6 +265,53 @@ public sealed class HandoverBeginResponse
     public PasskeyRequestOptions Options { get; set; } = null!;
 }
 
+/// <summary>Response of <c>keyset/recovery/begin</c>.</summary>
+public sealed class RecoveryBeginResponse
+{
+    /// <summary>Send back to <c>keyset/recovery/complete</c>; works once, for as long as a ceremony does.  Also the waiting recovery's id.</summary>
+    public string RecoveryId { get; set; } = string.Empty;
+
+    /// <summary>Assertion options that allow only the heir, user verification required.</summary>
+    public PasskeyRequestOptions Options { get; set; } = null!;
+}
+
+/// <summary>Response (202) of <c>keyset/recovery/complete</c>.</summary>
+public sealed class RecoveryCompleteResponse
+{
+    /// <summary>Whether this session ended (it was signed in with the passkey taken out of sign-in).</summary>
+    public bool SignedOut { get; set; }
+
+    /// <summary>Where to go when <see cref="SignedOut"/>, else null.</summary>
+    public string? NextUrl { get; set; }
+
+    /// <summary>When the key set moves unless the recovery is canceled.</summary>
+    public DateTime EffectiveUtc { get; set; }
+}
+
+/// <summary>A waiting lost-device recovery, as <c>GET passkeys</c> shows it.</summary>
+public sealed class PendingRecoverySummary
+{
+    /// <summary>The recovery id, for <c>keyset/recovery/{id}/cancel</c>.</summary>
+    public string Id { get; set; } = string.Empty;
+
+    /// <summary>The passkey that was taken out of sign-in, or null.</summary>
+    public string? Removes { get; set; }
+
+    /// <summary>The passkey the key set moves to.</summary>
+    public string Heir { get; set; } = string.Empty;
+
+    /// <summary>When the key set moves.</summary>
+    public DateTime EffectiveUtc { get; set; }
+
+    /// <summary>Builds the summary of a stored recovery.</summary>
+    /// <param name="recovery">The waiting recovery.</param>
+    public static PendingRecoverySummary Of(PendingKeySetRecoveryData recovery)
+    {
+        ArgumentNullException.ThrowIfNull(recovery);
+        return new PendingRecoverySummary { Id = recovery.RecoveryId, Removes = recovery.RemovedCredentialId, Heir = recovery.HeirCredentialId, EffectiveUtc = recovery.EffectiveUtc };
+    }
+}
+
 /// <summary>Response of <c>additional/complete</c>.</summary>
 public sealed class PasskeyAddedResponse
 {
@@ -255,6 +347,12 @@ public sealed class PasskeyListResponse
 {
     /// <summary>The signed-in person's passkeys, oldest first.</summary>
     public List<PasskeySummary> Passkeys { get; set; } = new List<PasskeySummary>();
+
+    /// <summary>The waiting lost-device recovery, or null (bam.protocol#85).</summary>
+    public PendingRecoverySummary? PendingRecovery { get; set; }
+
+    /// <summary>Whether the person can start a recovery: this host can recover, they have a key set, no passkey holds it, and nothing is waiting.</summary>
+    public bool KeySetRecoverable { get; set; }
 }
 
 /// <summary>One passkey as the manage page shows it.  No key material.</summary>

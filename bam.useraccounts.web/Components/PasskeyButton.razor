@@ -1,11 +1,11 @@
 @* A button the browser module binds to.  Mode is one of register, signin, add, rename, remove, profile,
-   signout; the module reads the named form's fields and runs that action. *@
+   signout, recover, cancelrecovery; the module reads the named form's fields and runs that action. *@
 
 <button type="button" class="btn @CssClass account-button" data-account-action="@Mode" data-account-form="@FormId"
-        data-account-return="@ReturnUrl" data-account-credential="@CredentialId">@Label</button>
+        data-account-return="@ReturnUrl" data-account-credential="@CredentialId" data-account-recovery="@RecoveryId">@Label</button>
 
 @code {
-    /// <summary>The action: <c>register</c>, <c>signin</c>, <c>add</c>, <c>rename</c>, <c>remove</c>, <c>profile</c> or <c>signout</c>.</summary>
+    /// <summary>The action: <c>register</c>, <c>signin</c>, <c>add</c>, <c>rename</c>, <c>remove</c>, <c>profile</c>, <c>signout</c>, <c>recover</c> or <c>cancelrecovery</c>.</summary>
     [Parameter, EditorRequired]
     public string Mode { get; set; } = string.Empty;
 
@@ -24,6 +24,10 @@
     /// <summary>The passkey a rename or remove acts on.</summary>
     [Parameter]
     public string? CredentialId { get; set; }
+
+    /// <summary>The waiting recovery a <c>cancelrecovery</c> acts on.</summary>
+    [Parameter]
+    public string? RecoveryId { get; set; }
 
     /// <summary>Bootstrap button classes.  Defaults to <c>btn-primary</c>.</summary>
     [Parameter]

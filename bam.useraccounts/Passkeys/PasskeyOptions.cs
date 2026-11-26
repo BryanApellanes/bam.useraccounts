@@ -42,6 +42,19 @@ public sealed class PasskeyOptions
     /// <summary>How long an issued challenge stays valid. Default five minutes.</summary>
     public TimeSpan ChallengeLifetime { get; set; } = TimeSpan.FromMinutes(5);
 
+    /// <summary>
+    /// How long a passkey must have been registered before it can recover the key set after the
+    /// key-set passkey is lost (bam.protocol#85).  A session or passkey an attacker added recently
+    /// can't take the key set.  Default seven days; must be positive.
+    /// </summary>
+    public TimeSpan RecoveryCredentialAge { get; set; } = TimeSpan.FromDays(7);
+
+    /// <summary>
+    /// How long a lost-device recovery waits before the key set moves, during which any signed-in
+    /// session of the person can cancel it (bam.protocol#85).  Default 72 hours; must be positive.
+    /// </summary>
+    public TimeSpan RecoveryDelay { get; set; } = TimeSpan.FromHours(72);
+
     /// <summary>The timeout hint sent to the browser. Default sixty seconds.</summary>
     public TimeSpan Timeout { get; set; } = TimeSpan.FromSeconds(60);
 
@@ -123,6 +136,16 @@ public sealed class PasskeyOptions
         if (ChallengeLifetime <= TimeSpan.Zero)
         {
             throw new ArgumentException("PasskeyOptions.ChallengeLifetime must be positive.");
+        }
+        // Lost-device recovery keeps both limits (bam.protocol#85, owner decision 2026-11-12): a
+        // host can lengthen or shorten them, never turn either off.
+        if (RecoveryCredentialAge <= TimeSpan.Zero)
+        {
+            throw new ArgumentException("PasskeyOptions.RecoveryCredentialAge must be positive.");
+        }
+        if (RecoveryDelay <= TimeSpan.Zero)
+        {
+            throw new ArgumentException("PasskeyOptions.RecoveryDelay must be positive.");
         }
         // Browsers ignore a residentKey value they don't know, so a typo would silently drop the preference.
         if (ResidentKey is not ("discouraged" or "preferred" or "required"))

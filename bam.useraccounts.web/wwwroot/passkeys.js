@@ -228,6 +228,24 @@ export async function handOver(credentialId, heir) {
     return call("POST", path + "/complete", { handoverId: begun.handoverId, credential: credentialToJson(credential) });
 }
 
+/**
+ * Recovers the account key after the passkey that held it was lost (bam.protocol#85): the browser
+ * asks for this session's passkey (or heir, when given), and the key moves to it after the host's
+ * waiting period unless canceled. removes names the lost passkey when it hasn't been removed yet.
+ * Resolves to { signedOut, nextUrl, effectiveUtc }.
+ */
+export async function recover(removes, heir) {
+    requireSupport();
+    const begun = await call("POST", "/keyset/recovery/begin", { removes: removes || null, heir: heir || null });
+    const credential = await prompt(() => navigator.credentials.get({ publicKey: requestOptions(begun.options) }));
+    return call("POST", "/keyset/recovery/complete", { recoveryId: begun.recoveryId, credential: credentialToJson(credential) });
+}
+
+/** Cancels a waiting recovery of the account key. Resolves to null (204). */
+export function cancelRecovery(recoveryId) {
+    return call("POST", "/keyset/recovery/" + encodeURIComponent(recoveryId) + "/cancel", {});
+}
+
 // The other passkeys listed in this shell, as heir candidates. The server checks the heir is the
 // person's own registered passkey, so a listed id can't move the key set anywhere else.
 function otherPasskeys(shell, credentialId) {
@@ -352,6 +370,21 @@ const actions = {
             location.reload();
         }
     },
+    async recover(button, shell) {
+        if (!window.confirm(message("recoveryConfirmation", "Move your account key to this passkey?"))) {
+            return;
+        }
+        const done = await recover();
+        if (done && done.signedOut) {
+            go(done.nextUrl, signedOutUrl);
+        } else {
+            location.reload();
+        }
+    },
+    async cancelrecovery(button) {
+        await cancelRecovery(button.dataset.accountRecovery);
+        location.reload();
+    },
     async profile(button, shell) {
         await completeProfile(fields(shell, button.dataset.accountForm));
         location.reload();
@@ -362,10 +395,10 @@ const actions = {
     }
 };
 
-const ceremonies = new Set(["register", "signin", "add"]);
+const ceremonies = new Set(["register", "signin", "add", "recover"]);
 
 // Actions that change a signed-in account. Only the manage page renders them.
-const manageActions = new Set(["add", "rename", "remove", "profile"]);
+const manageActions = new Set(["add", "rename", "remove", "profile", "recover", "cancelrecovery"]);
 
 function onAccountPage(path) {
     return path === prefix || path.startsWith(prefix + "/");

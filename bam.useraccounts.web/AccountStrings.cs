@@ -125,6 +125,39 @@ public sealed class AccountStrings
     /// <summary>Shown when moving the key didn't go through.</summary>
     public string HandoverFailedMessage { get; set; } = "The key didn't move and nothing was removed. Reload the page and try again.";
 
+    /// <summary>Why the key can't be moved here: this site has no key rotation (the 409 <c>RotationUnavailable</c> refusal).</summary>
+    public string KeySetRotationUnavailableMessage { get; set; } = "This site can't move your account's key.";
+
+    /// <summary>
+    /// The confirmation before removing the key-set passkey without moving the key, on a site that
+    /// can recover the key afterwards (bam.protocol#85).  Replaces <see cref="KeySetKeepConfirmation"/> there.
+    /// </summary>
+    public string KeySetKeepRecoverableConfirmation { get; set; } = "This passkey holds your account's key, and moving the key now needs this passkey. Remove it anyway? You can't sign in with it after that. You can then recover the key with another passkey you've had for a while: the key moves after a waiting period, and you can cancel it until then.";
+
+    /// <summary>Shown when none of the person's passkeys holds their account key and it can be recovered.</summary>
+    public string RecoveryRecoverableNote { get; set; } = "None of your passkeys holds your account key. Recover it with the passkey on this device: the key moves after a waiting period, and any of your signed-in devices can cancel it until then.";
+
+    /// <summary>The button that starts a lost-device recovery.</summary>
+    public string RecoverKeySet { get; set; } = "Recover your account key";
+
+    /// <summary>The confirmation before a recovery begins.</summary>
+    public string RecoveryConfirmation { get; set; } = "Move your account key to this passkey? It moves after a waiting period, and any of your signed-in devices can cancel it until then.";
+
+    /// <summary>The banner while a recovery waits.  <c>{0}</c> is the heir passkey's name, <c>{1}</c> the date the key moves.</summary>
+    public string RecoveryPendingBanner { get; set; } = "Your account key moves to {0} on {1}. If you didn't start this, cancel it.";
+
+    /// <summary>The button that cancels a waiting recovery.</summary>
+    public string CancelRecovery { get; set; } = "Cancel the move";
+
+    /// <summary>A recovery is already waiting (the 409 <c>RecoveryPending</c> refusal).</summary>
+    public string RecoveryPendingMessage { get; set; } = "A move of your account key is already waiting. Reload the page to see it.";
+
+    /// <summary>The heir is too new to recover the key (the 409 <c>HeirTooNew</c> refusal).</summary>
+    public string RecoveryHeirTooNewMessage { get; set; } = "This passkey is too new to recover your account key. Try again later, or use a passkey you've had longer.";
+
+    /// <summary>A recovery step failed; nothing changed.</summary>
+    public string RecoveryFailedMessage { get; set; } = "Your account key didn't move and nothing was removed. Reload the page and try again.";
+
     /// <summary>Shown while a ceremony is running.</summary>
     public string WorkingMessage { get; set; } = "Waiting for your passkey...";
 

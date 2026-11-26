@@ -247,7 +247,33 @@ if (removal == PasskeyRemoval.KeySetHandoverRequired)
 - Without it, `Remove` behaves as before: the passkey goes and its key stays registered until revoked (`IsAvailable` is false, `Begin` refuses with `RotationUnavailable`). `Remove(handle, id, keepKeySet: true)` does that on purpose.
 - The proof anchors only a key set that is exactly one accepted passkey's key under that handle, and verifies an assertion by that passkey over SHA-256 of the tagged rotation payload (`PasskeyKeySetRotationProof.Challenge`). Its failure messages carry no assertion bytes or credential ids.
 - The challenge is single-use. A refused, expired or abandoned handover changes nothing: both passkeys and the key set stay as they were. If the key set moved or the heir went away in between, `Complete` refuses with `KeySetChanged` or `HeirGone`.
-- Recovery when the key-set passkey is lost is bam.protocol#85; it isn't built yet.
+- A lost key-set passkey can't sign a handover; see the next section.
+
+### Recovering the key set after the key-set passkey is lost
+
+When the passkey that holds the key set is lost, it can't sign a handover. `IKeySetRecovery` moves the key set to a surviving passkey instead, under a rule that makes a stolen session a poor way to take an account (bam.protocol#85, option 2):
+
+- The heir must be at least `PasskeyOptions.RecoveryCredentialAge` old (7 days) and must assert with user verification over the rotation challenge.
+- The key set moves `PasskeyOptions.RecoveryDelay` (72 hours) after the recovery is proved. Until then the old key still verifies as the handle, and any signed-in session of the person can cancel it.
+- The lost passkey stops signing in at once. Its key is blocklisted only when the key set moves.
+
+```csharp
+IKeySetRecovery recovery = registry.Get<IKeySetRecovery>();
+// removes: the lost passkey, or null when it was already removed with ?keySet=keep.
+KeySetRecoveryStart start = recovery.Begin("person-handle", lostCredentialId, heirCredentialId: null, sessionCredentialId);
+// start.Options goes to navigator.credentials.get(); post the assertion JSON back.
+KeySetRecoveryResult proved = recovery.Complete("person-handle", start.RecoveryId!, assertionJsonBytes);
+// proved.EffectiveUtc is when the key set moves. Cancel before then:
+recovery.Cancel("person-handle", start.RecoveryId!, sessionCredentialId);
+// Any request after EffectiveUtc settles it; Settle never throws.
+recovery.Settle("person-handle");
+```
+
+- Recovery is available when both `PasskeyKeySetRotationProof` and `PasskeyRecoveryRotationProof` are trusted. `AddPasskeyKeySetRotation` adds both.
+- Waiting recoveries are kept in `IKeySetRecoveryRepository`: `PersistedKeySetRecoveryRepository` when the registry has an `IRepository`, else in memory with a warning. A restart then cancels a waiting recovery, which fails safe.
+- `PasskeyRecoveryRotationProof` anchors a key set only while a due, open recovery for that handle began from it. It verifies the stored assertion again (signature, challenge, user verification; the counter was checked at complete), so a row altered at rest doesn't move the key. The tombstone reads `rotation:passkey-recovery`.
+- One recovery waits at a time, and a handover is refused while one waits. Removing the heir cancels it. A key set that moved some other way ends it. A registrar refusal at settle (a blocklisted heir key, say) ends it, except `KeySetRotationTooSoonException` (bam.protocol#91), which leaves it waiting.
+- Begin refuses `HeirTooNew` with the time the heir becomes eligible, plus `NotFound`, `NotKeySet`, `RemovesRequired`, `InvalidHeir`, `NoKeySet`, `RotationUnavailable` and `RecoveryPending`. Complete refuses `RecoveryExpired`, `ProofRefused`, `KeySetChanged`, `HeirGone` and `RecoveryPending`; a refused complete changes nothing.
 
 ## Known Gaps / Not Yet Implemented
 

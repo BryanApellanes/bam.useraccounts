@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Bam.UserAccounts.Web;
 
@@ -67,6 +68,9 @@ public static class AccountWebRegistration
         services.AddTransient<IPasskeyCeremony>(_ => registry.Get<IPasskeyCeremony>());
         services.AddTransient<IPasskeyInventory>(_ => registry.Get<IPasskeyInventory>());
         services.AddTransient<IKeySetHandover>(_ => registry.Get<IKeySetHandover>());
+        services.AddTransient<IKeySetRecovery>(_ => registry.Get<IKeySetRecovery>());
+        // The manage page resolves the key set once per view; a host that already binds the registrar keeps its binding.
+        services.TryAddTransient<IPublicKeySetRegistrar>(_ => registry.Get<IPublicKeySetRegistrar>());
         services.AddTransient<IPasskeyCredentialRepository>(_ => registry.Get<IPasskeyCredentialRepository>());
         services.AddScoped<AccountSession>();
 
@@ -122,6 +126,7 @@ public static class AccountWebRegistration
             RequireResolvable<IPasskeySignUp>(registry, problems);
             RequireResolvable<IPasskeyInventory>(registry, problems);
             RequireResolvable<IKeySetHandover>(registry, problems);
+            RequireResolvable<IKeySetRecovery>(registry, problems);
         }
         if (problems.Count > 0)
         {

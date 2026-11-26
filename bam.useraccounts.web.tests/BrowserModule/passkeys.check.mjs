@@ -270,6 +270,34 @@ await click(keyHolder, {}, [handoverRequired, begun, { status: 400, body: { erro
 expect("a refused handover removes nothing and says so",
     fetched.length === 3 && !fetched.some(call => call.url.includes("keySet=keep")) && assigned.length === 0, { fetched, assigned });
 
+// Recovering the key set after the passkey that held it was lost (bam.protocol#85): confirm,
+// begin, assert with this device's passkey, complete, then reload; cancel posts and reloads.
+const recoveryBegun = { status: 200, body: { recoveryId: "r-1", options: {} } };
+at("/account");
+const recoveryPage = shell();
+const recoverButton = new Element({ dataset: { accountAction: "recover" }, parent: recoveryPage });
+await click(recoverButton, {}, [recoveryBegun, { status: 202, body: { signedOut: false, effectiveUtc: "2026-11-29T00:00:00Z" } }]);
+expect("recover confirms, begins with no removes or heir, and completes with the assertion",
+    confirmed === 1 && fetched.length === 2 && fetched[0].url === "/account/keyset/recovery/begin" && fetched[0].body.removes === null && fetched[0].body.heir === null
+    && fetched[1].url === "/account/keyset/recovery/complete" && fetched[1].body.recoveryId === "r-1" && fetched[1].body.credential.id === "cred-1"
+    && fetched[1].header === "1" && assigned[0] === "(reload)", { confirmed, fetched, assigned });
+
+await click(recoverButton, {}, [], [false]);
+expect("declining the recovery sends nothing", fetched.length === 0, fetched);
+
+await click(recoverButton, {}, [recoveryBegun, { status: 202, body: { signedOut: true, nextUrl: "https://evil.example" } }]);
+expect("a recovery that ended the session falls back to the signed-out page", assigned[0] === "/account/signedout", assigned);
+
+const cancelButton = new Element({ dataset: { accountAction: "cancelrecovery", accountRecovery: "r 1/x" }, parent: recoveryPage });
+await click(cancelButton, {}, [{ status: 204, body: null }]);
+expect("cancel posts to the recovery's own path and reloads",
+    fetched.length === 1 && fetched[0].method === "POST" && fetched[0].url === "/account/keyset/recovery/r%201%2Fx/cancel" && assigned[0] === "(reload)", { fetched, assigned });
+
+at("/account/signin");
+await click(gadget("recover"), {}, [recoveryBegun]);
+await click(gadget("cancelrecovery", { accountRecovery: "r-1" }), {});
+expect("recover and cancel run only on the manage page", fetched.length === 0 && confirmed === 0, { fetched, confirmed });
+
 expect("the module exports isLocalPath", typeof module.isLocalPath === "function", Object.keys(module));
 for (const [url, local] of typeof module.isLocalPath !== "function" ? [] : [["/account", true], ["/", true], ["//x", false], ["/\\x", false], ["http://x", false], ["/a\tb", false], ["/a\u0085b", false]]) {
     expect(`isLocalPath(${JSON.stringify(url)})`, module.isLocalPath(url) === local, url);
