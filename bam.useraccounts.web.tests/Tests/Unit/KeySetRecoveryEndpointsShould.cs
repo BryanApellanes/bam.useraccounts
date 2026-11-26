@@ -228,7 +228,15 @@ public class KeySetRecoveryEndpointsShould : UnitTestMenuContainer
                     AccountReply handover = host.Post("/account/passkeys/" + first.CredentialIdBase64Url + "/handover/begin", new HandoverBeginRequest { Heir = second.CredentialIdBase64Url }, session);
                     PasskeyListResponse list = host.Get("/account/passkeys", session).As<PasskeyListResponse>();
                     string page = host.Get("/account", session).Body;
-                    return new UnavailableOutcome(recovery, handover, list, page.Contains("account-recovery", StringComparison.Ordinal), host.Site.Strings.KeySetRotationUnavailableMessage);
+                    // The key-set passkey removed keeping the key, on a host that can't rotate:
+                    // passkey recovery can't move it, and the list and page say so.
+                    // Signed in with the passkey that stays: removing the session's own passkey ends that session.
+                    string secondSession = host.SignIn(second, "alice").SessionCookie!;
+                    host.Delete("/account/passkeys/" + first.CredentialIdBase64Url + "?keySet=keep", secondSession);
+                    PasskeyListResponse orphaned = host.Get("/account/passkeys", secondSession).As<PasskeyListResponse>();
+                    string orphanedPage = host.Get("/account", secondSession).Body;
+                    return new UnavailableOutcome(recovery, handover, list, page.Contains("account-recovery", StringComparison.Ordinal), host.Site.Strings.KeySetRotationUnavailableMessage,
+                        orphaned, orphanedPage.Contains("account-unrecoverable", StringComparison.Ordinal) && !orphanedPage.Contains("data-account-action=\"recover\"", StringComparison.Ordinal));
                 }
                 finally
                 {
@@ -243,6 +251,64 @@ public class KeySetRecoveryEndpointsShould : UnitTestMenuContainer
                 because.ItsTrue($"so does the handover, in its own words ({outcome.Handover.Body})", outcome.Handover.ErrorCode == AccountErrorCodes.RotationUnavailable && outcome.Handover.As<AccountError>().Message == outcome.Message);
                 because.ItsTrue("the list offers no recovery", !outcome.List.KeySetRecoverable && outcome.List.PendingRecovery is null);
                 because.ItsTrue("the manage page shows no recovery", !outcome.PageMentionsRecovery);
+                because.ItsTrue("an orphaned key set on a host that can't rotate is flagged, not offered", outcome.Orphaned.KeySetUnrecoverable && !outcome.Orphaned.KeySetRecoverable);
+                because.ItsTrue("and the page shows the note with no recover button", outcome.OrphanedPageShowsNote);
+            })
+            .SoBeHappy()
+            .UnlessItFailed();
+    }
+
+    [UnitTest]
+    public void FlagAKeySetPasskeyRecoveryCannotMove()
+    {
+        ManualClock clock = new ManualClock();
+        KeySetRotationProofs proofs = KeySetRotationProofChain.DefaultProofs();
+        RebindProof rebind = new RebindProof();
+        proofs.Add(rebind);
+        When.A<AccountHost>("removes the key-set passkey keeping the key, then support re-binds the key set to a key no passkey holds",
+            () => new AccountHost(bind: registry =>
+            {
+                PublicKeySetRegistrar registrar = new PublicKeySetRegistrar(HandoverFixture.CreateObjectDataRepository("web-" + nameof(FlagAKeySetPasskeyRecoveryCannotMove)), new KeySetRotationProofChain(proofs));
+                registry.For<KeySetRotationProofs>().UseSingleton(proofs);
+                registry.For<IPublicKeySetRegistrar>().UseSingleton(registrar);
+                registry.For<TimeProvider>().UseSingleton(clock);
+            }),
+            (host) =>
+            {
+                try
+                {
+                    SyntheticAuthenticator first = new SyntheticAuthenticator();
+                    SyntheticAuthenticator second = new SyntheticAuthenticator();
+                    string session = host.SignUp("alice", "Alice Example", first).SessionCookie!;
+                    Add(host, second, session);
+                    string secondSession = host.SignIn(second, "alice").SessionCookie!;
+                    string healthyBody = host.Get("/account/passkeys", secondSession).Body;
+                    host.Delete("/account/passkeys/" + first.CredentialIdBase64Url + "?keySet=keep", secondSession);
+                    PasskeyListResponse recoverable = host.Get("/account/passkeys", secondSession).As<PasskeyListResponse>();
+                    string recoverableBody = host.Get("/account/passkeys", secondSession).Body;
+
+                    string handle = host.Fixture.Passkeys.Credentials.FindByCredentialId(second.CredentialIdBase64Url)!.PersonHandle;
+                    rebind.Armed = true;
+                    host.Registry.Get<IPublicKeySetRegistrar>().Rotate(PasskeyKeySet.From(handle, Bam.Encryption.Cose.CoseAlgorithm.ES256, new SyntheticAuthenticator().PublicKeyPem), new byte[] { 1 });
+                    rebind.Armed = false;
+                    PasskeyListResponse rebound = host.Get("/account/passkeys", secondSession).As<PasskeyListResponse>();
+                    string page = host.Get("/account", secondSession).Body;
+                    bool pageShowsNote = page.Contains("account-unrecoverable", StringComparison.Ordinal) && page.Contains(System.Text.Encodings.Web.HtmlEncoder.Default.Encode(host.Site.Strings.RecoveryUnrecoverableNote), StringComparison.Ordinal)
+                        && !page.Contains("data-account-action=\"recover\"", StringComparison.Ordinal);
+                    return new UnrecoverableOutcome(healthyBody.Contains("keySetUnrecoverable", StringComparison.Ordinal), recoverable, recoverableBody.Contains("keySetUnrecoverable", StringComparison.Ordinal), rebound, pageShowsNote);
+                }
+                finally
+                {
+                    host.Dispose();
+                }
+            })
+            .TheTest
+            .ShouldPass<UnrecoverableOutcome>((because, outcome) =>
+            {
+                because.ItsTrue("a healthy account's list has no keySetUnrecoverable member", !outcome.HealthyHasMember);
+                because.ItsTrue("an orphaned key set with a removed-key record is recoverable and not flagged", outcome.Recoverable.KeySetRecoverable && !outcome.Recoverable.KeySetUnrecoverable && !outcome.RecoverableHasMember);
+                because.ItsTrue("a re-bound key set is flagged and not offered", outcome.Rebound.KeySetUnrecoverable && !outcome.Rebound.KeySetRecoverable);
+                because.ItsTrue("the page shows the note with no recover button", outcome.PageShowsNote);
             })
             .SoBeHappy()
             .UnlessItFailed();
@@ -343,7 +409,10 @@ public class KeySetRecoveryEndpointsShould : UnitTestMenuContainer
 
     private sealed record RuleOutcome(AccountReply RemovesRequired, AccountReply NotKeySet, AccountReply InvalidHeir, AccountReply NotFound, AccountReply UnknownId, AccountReply NoBody, AccountReply SignedOut);
 
-    private sealed record UnavailableOutcome(AccountReply Recovery, AccountReply Handover, PasskeyListResponse List, bool PageMentionsRecovery, string Message);
+    private sealed record UnavailableOutcome(AccountReply Recovery, AccountReply Handover, PasskeyListResponse List, bool PageMentionsRecovery, string Message,
+        PasskeyListResponse Orphaned, bool OrphanedPageShowsNote);
+
+    private sealed record UnrecoverableOutcome(bool HealthyHasMember, PasskeyListResponse Recoverable, bool RecoverableHasMember, PasskeyListResponse Rebound, bool PageShowsNote);
 
     private sealed record BadgeOutcome(bool FirstBadged, bool SecondBadged);
 }

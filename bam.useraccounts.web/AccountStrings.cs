@@ -155,8 +155,12 @@ public sealed class AccountStrings
     /// <summary>The heading of the note when no passkey holds the account key and it can be recovered.</summary>
     public string RecoveryRecoverableTitle { get; set; } = "No passkey holds your account key";
 
-    /// <summary>Shown under that heading when no recovery can start for the key set (the passkeys list's <c>keySetUnrecoverable</c>); the native app uses the same words.</summary>
-    public string RecoveryUnrecoverableNote { get; set; } = "This account's key can't be recovered from this device. Contact support.";
+    /// <summary>
+    /// Shown under that heading when passkey recovery can't move the key set (the passkeys list's
+    /// <c>keySetUnrecoverable</c>).  Informational, not an error: the key may be on a device key or
+    /// one support set up.  The native app uses the same words.
+    /// </summary>
+    public string RecoveryUnrecoverableNote { get; set; } = "Your account key is held somewhere other than your passkeys, such as another device or a key support set up, so it can't be moved from here. If you've lost what holds it, contact support.";
 
     /// <summary>The button that cancels a waiting recovery.</summary>
     public string CancelRecovery { get; set; } = "Cancel the move";

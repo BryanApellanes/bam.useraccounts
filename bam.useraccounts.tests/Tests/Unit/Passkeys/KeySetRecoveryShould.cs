@@ -677,9 +677,17 @@ public class KeySetRecoveryShould : UnitTestMenuContainer
 
             bool recoverableWhenRebound = fixture.Recovery.IsRecoverable(Handle);
             bool unrecoverableWhenRebound = fixture.Recovery.IsUnrecoverable(Handle);
+
+            // A device-key person who then adds a passkey: the key set was never a passkey's, so
+            // passkey recovery can't move it either; the signal says so, and the copy isn't a fault.
+            const string deviceHandle = "device-person";
+            fixture.Registrar.Register(PasskeyKeySet.From(deviceHandle, CoseAlgorithm.ES256, new SyntheticAuthenticator().PublicKeyPem));
+            fixture.Add(new SyntheticAuthenticator(), deviceHandle);
+            bool deviceKeyRecoverable = fixture.Recovery.IsRecoverable(deviceHandle);
+            bool deviceKeyUnrecoverable = fixture.Recovery.IsUnrecoverable(deviceHandle);
             KeySetRecoveryRefusal begin = fixture.Recovery.Begin(Handle, null, heirId, null).Refusal;
             return new ReboundBeforeBeginOutcome(recoverableWhenOrphaned, recoverableWhenRebound, begin, fixture.Recoveries.FindByHandle(Handle).Count,
-                unrecoverableWithNoKeySet, unrecoverableWhenHeld, unrecoverableWhenOrphaned, unrecoverableWhenRebound);
+                unrecoverableWithNoKeySet, unrecoverableWhenHeld, unrecoverableWhenOrphaned, unrecoverableWhenRebound, deviceKeyRecoverable, deviceKeyUnrecoverable);
         })
         .TheTest
         .ShouldPass<ReboundBeforeBeginOutcome>((because, outcome) =>
@@ -689,7 +697,8 @@ public class KeySetRecoveryShould : UnitTestMenuContainer
             because.ItsTrue("a person with no key set isn't told to contact support", !outcome.UnrecoverableWithNoKeySet);
             because.ItsTrue("nor is one whose passkey holds the key set", !outcome.UnrecoverableWhenHeld);
             because.ItsTrue("nor one who can recover", !outcome.UnrecoverableWhenOrphaned);
-            because.ItsTrue("a key set no passkey held and no recovery can take is unrecoverable", outcome.UnrecoverableWhenRebound);
+            because.ItsTrue("a key set no passkey held and no recovery can take is flagged as one passkey recovery can't move", outcome.UnrecoverableWhenRebound);
+            because.ItsTrue("so is a device-key key set after a passkey is added, and it isn't offered for recovery", outcome.DeviceKeyUnrecoverable && !outcome.DeviceKeyRecoverable);
             because.ItsTrue("and beginning a recovery of it is refused", outcome.Begin == KeySetRecoveryRefusal.NoKeySet);
             because.ItsTrue("nothing is stored", outcome.StoredRecoveries == 0);
         })
@@ -906,24 +915,6 @@ public class KeySetRecoveryShould : UnitTestMenuContainer
         fixture.Recoveries.RewriteAtRest(row);
     }
 
-    /// <summary>Stands in for an administrative re-bind: anchors and verifies only while armed.</summary>
-    private sealed class RebindProof : IKeySetRotationProof
-    {
-        public bool Armed { get; set; }
-
-        public string Name => "test-rebind";
-
-        public bool Anchors(PublicKeySetData current)
-        {
-            return Armed;
-        }
-
-        public ISignatureVerification Verify(PublicKeySetData current, PublicKeySetData proposed, byte[] proof)
-        {
-            return new KeySetRotationVerification { Success = Armed, Message = Armed ? "rebound" : "not armed", ProofName = Name };
-        }
-    }
-
     private static PendingKeySetRecoveryData Row(string handle, string id, DateTime began)
     {
         return new PendingKeySetRecoveryData
@@ -974,7 +965,7 @@ public class KeySetRecoveryShould : UnitTestMenuContainer
         bool WaitingAfterRegistrarFault, KeySetRecoverySettlement Settled, bool MovedToHeir);
 
     private sealed record ReboundBeforeBeginOutcome(bool RecoverableWhenOrphaned, bool RecoverableWhenRebound, KeySetRecoveryRefusal Begin, int StoredRecoveries,
-        bool UnrecoverableWithNoKeySet, bool UnrecoverableWhenHeld, bool UnrecoverableWhenOrphaned, bool UnrecoverableWhenRebound);
+        bool UnrecoverableWithNoKeySet, bool UnrecoverableWhenHeld, bool UnrecoverableWhenOrphaned, bool UnrecoverableWhenRebound, bool DeviceKeyRecoverable, bool DeviceKeyUnrecoverable);
 
     private sealed record ReplayOutcome(bool Proved, bool Canceled, bool BegunAgain, KeySetRecoveryRefusal Replayed, bool AlteredTextDiffers, KeySetRecoveryRefusal AlteredReplayed, bool FreshProved);
 

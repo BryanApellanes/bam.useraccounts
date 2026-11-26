@@ -26,11 +26,13 @@ public interface IKeySetRecovery
     bool IsRecoverable(string personHandle);
 
     /// <summary>
-    /// Whether the person has a key set that no accepted passkey holds, nothing is waiting, and no
-    /// recovery can start for it: this host can't recover, or the key set isn't the key of a passkey
-    /// the person removed (for example one orphaned before removals were recorded).  Such a person
-    /// needs support (an operator record or an admin re-bind).  Never true together with
-    /// <see cref="IsRecoverable"/>, and false for a person with no key set at all.
+    /// Whether passkey recovery can't move the person's key set: they have a key set, no accepted
+    /// passkey holds it, nothing is waiting, and either this host can't recover or the key set isn't
+    /// the key of a passkey the person removed.  That is not by itself a fault: it is also true of a
+    /// key set held by a device key, or one support re-bound to a key outside the person's passkeys.
+    /// A key set can't tell those apart from one orphaned before removals were recorded, so clients
+    /// say where the key is and only suggest support if what holds it was lost.  Never true together
+    /// with <see cref="IsRecoverable"/>, and false for a person with no key set at all.
     /// </summary>
     /// <param name="personHandle">The authenticated person's handle.</param>
     bool IsUnrecoverable(string personHandle);

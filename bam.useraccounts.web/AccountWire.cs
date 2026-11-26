@@ -362,11 +362,15 @@ public sealed class PasskeyListResponse
     public bool KeySetRecoverable { get; set; }
 
     /// <summary>
-    /// Whether the person has a key set no passkey holds, nothing is waiting, and no recovery can start
-    /// for it, so the client should send them to support.  Omitted when false; never true together
-    /// with <see cref="KeySetRecoverable"/>, and false when the person has no key set.
+    /// Whether passkey recovery can't move the person's key set: they have one, no passkey holds it,
+    /// nothing is waiting, and no recovery can start for it (<see cref="Bam.UserAccounts.Passkeys.IKeySetRecovery.IsUnrecoverable"/>).
+    /// Not a fault by itself (a device key or a support re-bind also hold key sets no passkey
+    /// holds), so a client shows where the key is and suggests support only if what holds it was
+    /// lost.  Omitted when false; never true together with <see cref="KeySetRecoverable"/>, and
+    /// false when the person has no key set.
     /// </summary>
-    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    // The wire is written by PasskeyJson (Newtonsoft), so the omission is Newtonsoft's attribute.
+    [Newtonsoft.Json.JsonProperty(DefaultValueHandling = Newtonsoft.Json.DefaultValueHandling.Ignore)]
     public bool KeySetUnrecoverable { get; set; }
 }
 
