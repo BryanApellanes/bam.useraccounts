@@ -186,7 +186,18 @@ public static class AccountEndpoints
         recovery.Settle(handle);
         // A recovery still waiting is shown at every sign-in, and the person lands on the manage
         // page, where they can cancel it: the delay protects them only if they see it.
-        PendingKeySetRecoveryData? pending = recovery.Pending(handle);
+        // A store fault here is logged and answers with no waiting recovery rather than failing a
+        // sign-in whose cookie is already issued; the manage page reads it again.
+        PendingKeySetRecoveryData? pending;
+        try
+        {
+            pending = recovery.Pending(handle);
+        }
+        catch (Exception e)
+        {
+            Log.Warn("Sign-in for {0} could not read its waiting recovery: {1}", PasskeyText.Printable(handle), PasskeyText.Printable(e.Message, PasskeyVerification.MaxDetailLength));
+            pending = null;
+        }
         return Json(new SignedInResponse
         {
             Handle = handle,
@@ -250,6 +261,7 @@ public static class AccountEndpoints
         PendingKeySetRecoveryData? pending = recovery.Pending(handle);
         response.PendingRecovery = pending is null ? null : PendingRecoverySummary.Of(pending);
         response.KeySetRecoverable = pending is null && recovery.IsRecoverable(handle);
+        response.KeySetUnrecoverable = pending is null && !response.KeySetRecoverable && recovery.IsUnrecoverable(handle);
         return Json(response);
     }
 

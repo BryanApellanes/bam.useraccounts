@@ -66,9 +66,11 @@ public static class PasskeysServiceRegistration
             else
             {
                 // A host that brought its own custody and no store: recoveries then live in memory. A
-                // restart loses a waiting recovery, which fails safe (the key set doesn't move; the
-                // person starts again), but the host should bind durable custody.
-                Bam.Logging.Log.Warn("AddPasskeys: no IRepository and no IKeySetRecoveryRepository bound; lost-device recoveries are kept in memory, which suits a single-process host only: a restart cancels them, and another instance can neither see nor cancel them.");
+                // restart loses a waiting recovery and the removed-key records with it. The key set
+                // doesn't move, but if the recovery had already removed the lost passkey, nothing is
+                // left to recover the key set from without an operator (bam.useraccounts#29). The host
+                // should bind durable custody.
+                Bam.Logging.Log.Warn("AddPasskeys: no IRepository and no IKeySetRecoveryRepository bound; lost-device recoveries are kept in memory, which suits a single-process host only: a restart loses them and the removed-key records, which can leave a key set recoverable only by an operator, and another instance can neither see nor cancel them.");
                 registry.For<IKeySetRecoveryRepository>().UseSingleton(new InMemoryKeySetRecoveryRepository());
             }
         }

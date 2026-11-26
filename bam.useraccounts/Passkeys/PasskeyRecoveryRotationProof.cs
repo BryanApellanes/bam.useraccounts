@@ -22,8 +22,9 @@ namespace Bam.UserAccounts.Passkeys;
 /// the key of a passkey the person removed.  An admin rebind or a device key is never recoverable.
 /// </para>
 /// <para>
-/// The recovery store is trusted for what was proved and when; the proof still holds the stored
-/// effective time to at least the begin time plus <see cref="PasskeyOptions.RecoveryDelay"/>.
+/// The recovery store is trusted for what was proved and when; a recovery is due only once both its
+/// stored effective time and its begin time plus <see cref="PasskeyOptions.RecoveryDelay"/> have
+/// passed, the same rule <see cref="KeySetRecovery.Settle"/> waits by.
 /// </para>
 /// <para>
 /// The proof bytes are the heir's assertion exactly as <see cref="KeySetRecovery"/> stored it.  The
@@ -168,8 +169,8 @@ public sealed class PasskeyRecoveryRotationProof : IKeySetRotationProof
     // set.  A storage fault throws, so Verify reports a fault rather than a refusal (Anchors catches
     // it).  More than one open recovery anchors nothing: within a process there is never more than
     // one, and across processes the banner, the cancel and the proof must act on the same row.  The
-    // stored effective time is held to the begin time plus the delay, so a row edited at rest with an
-    // earlier one doesn't skip the wait.
+    // wait is also held to the begin time plus the delay, so a row edited at rest with an earlier
+    // effective time doesn't skip it.
     private PendingKeySetRecoveryData? DueRecovery(PublicKeySetData? keySet)
     {
         if (keySet is null || string.IsNullOrWhiteSpace(keySet.KeySetHandle))
@@ -188,8 +189,11 @@ public sealed class PasskeyRecoveryRotationProof : IKeySetRotationProof
         PendingKeySetRecoveryData only = open[0];
         string anchor = KeySetRotationPayload.AnchorSha256(keySet);
         DateTime now = _clock().GetUtcNow().UtcDateTime;
+        // The same rule Settle waits by: due once both the stored effective time and the begin time
+        // plus the current delay have passed.  A row whose effective time was moved earlier at rest,
+        // or a delay raised while a recovery waits, just waits longer; it is never refused for it.
         DateTime earliest = only.BeganUtc.Add(_options().RecoveryDelay);
-        bool due = only.EffectiveUtc >= earliest && only.EffectiveUtc <= now;
+        bool due = now >= only.EffectiveUtc && now >= earliest;
         return due && string.Equals(only.Anchor, anchor, StringComparison.Ordinal) ? only : null;
     }
 

@@ -659,10 +659,13 @@ public class KeySetRecoveryShould : UnitTestMenuContainer
         {
             SyntheticAuthenticator lost = new SyntheticAuthenticator();
             SyntheticAuthenticator heir = new SyntheticAuthenticator();
+            bool unrecoverableWithNoKeySet = fixture.Recovery.IsUnrecoverable(Handle);
             string lostId = fixture.SignUp(lost);
             string heirId = fixture.Add(heir);
+            bool unrecoverableWhenHeld = fixture.Recovery.IsUnrecoverable(Handle);
             fixture.Inventory.Remove(Handle, lostId, keepKeySet: true);
             bool recoverableWhenOrphaned = fixture.Recovery.IsRecoverable(Handle);
+            bool unrecoverableWhenOrphaned = fixture.Recovery.IsUnrecoverable(Handle);
 
             // An admin re-bind before any recovery begins: the key set is now a key no passkey held.
             RebindProof rebind = new RebindProof();
@@ -673,14 +676,20 @@ public class KeySetRecoveryShould : UnitTestMenuContainer
             fixture.AgePasskeys();
 
             bool recoverableWhenRebound = fixture.Recovery.IsRecoverable(Handle);
+            bool unrecoverableWhenRebound = fixture.Recovery.IsUnrecoverable(Handle);
             KeySetRecoveryRefusal begin = fixture.Recovery.Begin(Handle, null, heirId, null).Refusal;
-            return new ReboundBeforeBeginOutcome(recoverableWhenOrphaned, recoverableWhenRebound, begin, fixture.Recoveries.FindByHandle(Handle).Count);
+            return new ReboundBeforeBeginOutcome(recoverableWhenOrphaned, recoverableWhenRebound, begin, fixture.Recoveries.FindByHandle(Handle).Count,
+                unrecoverableWithNoKeySet, unrecoverableWhenHeld, unrecoverableWhenOrphaned, unrecoverableWhenRebound);
         })
         .TheTest
         .ShouldPass<ReboundBeforeBeginOutcome>((because, outcome) =>
         {
             because.ItsTrue("a key set whose passkey was removed is recoverable", outcome.RecoverableWhenOrphaned);
             because.ItsTrue("a key set no passkey held is not offered", !outcome.RecoverableWhenRebound);
+            because.ItsTrue("a person with no key set isn't told to contact support", !outcome.UnrecoverableWithNoKeySet);
+            because.ItsTrue("nor is one whose passkey holds the key set", !outcome.UnrecoverableWhenHeld);
+            because.ItsTrue("nor one who can recover", !outcome.UnrecoverableWhenOrphaned);
+            because.ItsTrue("a key set no passkey held and no recovery can take is unrecoverable", outcome.UnrecoverableWhenRebound);
             because.ItsTrue("and beginning a recovery of it is refused", outcome.Begin == KeySetRecoveryRefusal.NoKeySet);
             because.ItsTrue("nothing is stored", outcome.StoredRecoveries == 0);
         })
@@ -706,10 +715,14 @@ public class KeySetRecoveryShould : UnitTestMenuContainer
 
             KeySetRecoveryStart again = fixture.Recovery.Begin(Handle, null, heirId, null);
             KeySetRecoveryRefusal replayed = fixture.Recovery.Complete(Handle, again.RecoveryId, assertion).Refusal;
+            // The same signed parts with an unsigned field added: the text differs, the signature doesn't.
+            KeySetRecoveryStart altered = fixture.Recovery.Begin(Handle, null, heirId, null);
+            string alteredText = "{\"ceremonyId\":\"x\"," + Encoding.UTF8.GetString(assertion).Substring(1);
+            KeySetRecoveryRefusal alteredReplayed = fixture.Recovery.Complete(Handle, altered.RecoveryId, Encoding.UTF8.GetBytes(alteredText)).Refusal;
             KeySetRecoveryStart third = fixture.Recovery.Begin(Handle, null, heirId, null);
             byte[] fresh = Encoding.UTF8.GetBytes(PasskeyJson.Serialize(heir.Assert(Base64UrlEncoder.Default.Decode(third.Options!.Challenge))));
             bool freshProved = fixture.Recovery.Complete(Handle, third.RecoveryId, fresh).Success;
-            return new ReplayOutcome(proved, canceled, again.Success, replayed, freshProved);
+            return new ReplayOutcome(proved, canceled, again.Success, replayed, alteredText != Encoding.UTF8.GetString(assertion), alteredReplayed, freshProved);
         })
         .TheTest
         .ShouldPass<ReplayOutcome>((because, outcome) =>
@@ -717,7 +730,41 @@ public class KeySetRecoveryShould : UnitTestMenuContainer
             because.ItsTrue("the first recovery is proved and canceled", outcome.Proved && outcome.Canceled);
             because.ItsTrue("the key set its removed passkey held can be recovered again", outcome.BegunAgain);
             because.ItsTrue("the canceled recovery's assertion can't prove a new one", outcome.Replayed == KeySetRecoveryRefusal.ProofRefused);
+            because.ItsTrue("nor can it with an unsigned field added to change its text", outcome.AlteredTextDiffers && outcome.AlteredReplayed == KeySetRecoveryRefusal.ProofRefused);
             because.ItsTrue("a fresh assertion by the heir can", outcome.FreshProved);
+        })
+        .SoBeHappy()
+        .UnlessItFailed();
+    }
+
+    [UnitTest]
+    public void SettleARecoveryAfterTheDelayWasRaisedWhileItWaited()
+    {
+        When.A<HandoverFixture>("raises the recovery delay while a recovery waits", new HandoverFixture(nameof(SettleARecoveryAfterTheDelayWasRaisedWhileItWaited)), (fixture) =>
+        {
+            SyntheticAuthenticator lost = new SyntheticAuthenticator();
+            SyntheticAuthenticator heir = new SyntheticAuthenticator();
+            string lostId = fixture.SignUp(lost);
+            string heirId = fixture.Add(heir);
+            fixture.AgePasskeys();
+            KeySetRecoveryStart start = fixture.Recovery.Begin(Handle, lostId, heirId, null);
+            fixture.Recovery.Complete(Handle, start.RecoveryId, HandoverFixture.AssertionJson(heir, start));
+            TimeSpan original = fixture.Options.RecoveryDelay;
+            fixture.Options.RecoveryDelay = original.Add(TimeSpan.FromHours(24));
+
+            fixture.Clock.Advance(original);
+            KeySetRecoverySettlement atTheOldDelay = fixture.Recovery.Settle(Handle);
+            bool stillWaiting = fixture.Recovery.Pending(Handle) is not null && fixture.KeySetIs(lost);
+            fixture.Clock.Advance(TimeSpan.FromHours(24));
+            KeySetRecoverySettlement atTheNewDelay = fixture.Recovery.Settle(Handle);
+            return new RaisedDelayOutcome(atTheOldDelay, stillWaiting, atTheNewDelay, fixture.KeySetIs(heir));
+        })
+        .TheTest
+        .ShouldPass<RaisedDelayOutcome>((because, outcome) =>
+        {
+            because.ItsTrue("at the old delay the recovery isn't due yet", outcome.AtTheOldDelay == KeySetRecoverySettlement.NotDue);
+            because.ItsTrue("it keeps waiting and the key set stays", outcome.StillWaiting);
+            because.ItsTrue("once the raised delay passes it settles rather than being refused", outcome.AtTheNewDelay == KeySetRecoverySettlement.Settled && outcome.MovedToHeir);
         })
         .SoBeHappy()
         .UnlessItFailed();
@@ -926,9 +973,12 @@ public class KeySetRecoveryShould : UnitTestMenuContainer
     private sealed record FaultOutcome(KeySetRecoverySettlement ProofFault, bool FaultedAtTheProof, bool WaitingAfterProofFault, KeySetRecoverySettlement RegistrarFault, bool FaultedAtTheRegistrar,
         bool WaitingAfterRegistrarFault, KeySetRecoverySettlement Settled, bool MovedToHeir);
 
-    private sealed record ReboundBeforeBeginOutcome(bool RecoverableWhenOrphaned, bool RecoverableWhenRebound, KeySetRecoveryRefusal Begin, int StoredRecoveries);
+    private sealed record ReboundBeforeBeginOutcome(bool RecoverableWhenOrphaned, bool RecoverableWhenRebound, KeySetRecoveryRefusal Begin, int StoredRecoveries,
+        bool UnrecoverableWithNoKeySet, bool UnrecoverableWhenHeld, bool UnrecoverableWhenOrphaned, bool UnrecoverableWhenRebound);
 
-    private sealed record ReplayOutcome(bool Proved, bool Canceled, bool BegunAgain, KeySetRecoveryRefusal Replayed, bool FreshProved);
+    private sealed record ReplayOutcome(bool Proved, bool Canceled, bool BegunAgain, KeySetRecoveryRefusal Replayed, bool AlteredTextDiffers, KeySetRecoveryRefusal AlteredReplayed, bool FreshProved);
+
+    private sealed record RaisedDelayOutcome(KeySetRecoverySettlement AtTheOldDelay, bool StillWaiting, KeySetRecoverySettlement AtTheNewDelay, bool MovedToHeir);
 
     private sealed record DelayHeldOutcome(bool AnchorsWithAnEarlyEffectiveTime, KeySetRecoverySettlement EarlySettle, bool AnchorsWhenDue, bool AnchorsWithTwoOpen, bool KeySetKept);
 

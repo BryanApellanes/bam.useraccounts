@@ -89,6 +89,25 @@ public sealed class KeySetRecovery : IKeySetRecovery
     }
 
     /// <inheritdoc />
+    public bool IsUnrecoverable(string personHandle)
+    {
+        if (string.IsNullOrWhiteSpace(personHandle))
+        {
+            return false;
+        }
+        PublicKeySetData? current = _registrar.Resolve(personHandle);
+        if (current is null || Holder(personHandle, current) is not null)
+        {
+            return false;
+        }
+        if (!IsAvailable)
+        {
+            return true;
+        }
+        return Pending(personHandle) is null && !WasRemovedPasskeyKeySet(personHandle, current);
+    }
+
+    /// <inheritdoc />
     public KeySetRecoveryStart Begin(string personHandle, string? removesCredentialId, string? heirCredentialId, string? sessionCredentialId)
     {
         if (string.IsNullOrWhiteSpace(personHandle))
@@ -252,10 +271,13 @@ public sealed class KeySetRecovery : IKeySetRecovery
                 return Failed(personHandle, KeySetRecoveryRefusal.ProofRefused, "the heir's assertion was not user-verified.");
             }
             // The challenge is the rotation itself, not a server nonce, and a synced passkey's counter
-            // stays at 0, so an earlier recovery's assertion verifies again.  Refusing one any earlier
-            // recovery of the person stored keeps a cancel final.
+            // stays at 0, so an earlier recovery's assertion verifies again.  Refusing one whose signed
+            // parts (authenticator data, client data, signature) match an assertion any earlier
+            // recovery of the person stored keeps a cancel final against a replay, whatever unsigned
+            // JSON fields were changed.  What is left: an ES256 signature can be re-encoded as a
+            // second valid one, so only a server nonce in the challenge closes replay fully.
             string assertionText = Encoding.UTF8.GetString(assertionJson);
-            if (_recoveries.FindByHandle(personHandle).Any(earlier => string.Equals(earlier.AssertionJson, assertionText, StringComparison.Ordinal)))
+            if (_recoveries.FindByHandle(personHandle).Any(earlier => SignsTheSame(response, earlier.AssertionJson)))
             {
                 return Failed(personHandle, KeySetRecoveryRefusal.ProofRefused, "the heir's assertion was already used by an earlier recovery.");
             }
@@ -369,8 +391,9 @@ public sealed class KeySetRecovery : IKeySetRecovery
             {
                 return KeySetRecoverySettlement.NothingPending;
             }
-            // Held to the delay from the begin time too, as the proof holds it, so a row whose
-            // effective time was moved earlier at rest just waits rather than being refused.
+            // Held to the delay from the begin time too, by the same rule as the proof, so a row whose
+            // effective time was moved earlier at rest, or a delay raised while it waits, just waits
+            // longer and then settles.
             if (Now < recovery.EffectiveUtc || Now < recovery.BeganUtc.Add(_options.RecoveryDelay))
             {
                 return KeySetRecoverySettlement.NotDue;
@@ -516,6 +539,41 @@ public sealed class KeySetRecovery : IKeySetRecovery
     private static KeySetRecoveryStart Refused(KeySetRecoveryRefusal refusal)
     {
         return new KeySetRecoveryStart { Refusal = refusal };
+    }
+
+    // Whether an earlier recovery's stored assertion carries the same signed parts as this one: the
+    // decoded authenticator data, client data and signature.  Unsigned fields (rawId, type, extra
+    // members the client added) are ignored, so changing them doesn't make a replay look new.  A
+    // stored row that no longer parses is compared by nothing and matches nothing.
+    internal static bool SignsTheSame(PasskeyAssertionResponse response, string? earlierJson)
+    {
+        if (response?.Response is null || string.IsNullOrEmpty(earlierJson))
+        {
+            return false;
+        }
+        PasskeyAssertionResponse earlier;
+        try
+        {
+            earlier = PasskeyAssertionResponse.FromJson(Encoding.UTF8.GetBytes(earlierJson));
+        }
+        catch (PasskeyFormatException)
+        {
+            return false;
+        }
+        if (earlier.Response is null)
+        {
+            return false;
+        }
+        return SameBytes(response.Response.AuthenticatorData, earlier.Response.AuthenticatorData)
+            && SameBytes(response.Response.ClientDataJson, earlier.Response.ClientDataJson)
+            && SameBytes(response.Response.Signature, earlier.Response.Signature);
+    }
+
+    private static bool SameBytes(string? first, string? second)
+    {
+        byte[]? a = PasskeyEncoding.TryDecode(first);
+        byte[]? b = PasskeyEncoding.TryDecode(second);
+        return a is not null && b is not null && CryptographicOperations.FixedTimeEquals(a, b);
     }
 
     private static KeySetRecoveryResult Failed(string? personHandle, KeySetRecoveryRefusal refusal, string detail)

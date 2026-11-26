@@ -25,6 +25,16 @@ public interface IKeySetRecovery
     /// <param name="personHandle">The authenticated person's handle.</param>
     bool IsRecoverable(string personHandle);
 
+    /// <summary>
+    /// Whether the person has a key set that no accepted passkey holds, nothing is waiting, and no
+    /// recovery can start for it: this host can't recover, or the key set isn't the key of a passkey
+    /// the person removed (for example one orphaned before removals were recorded).  Such a person
+    /// needs support (an operator record or an admin re-bind).  Never true together with
+    /// <see cref="IsRecoverable"/>, and false for a person with no key set at all.
+    /// </summary>
+    /// <param name="personHandle">The authenticated person's handle.</param>
+    bool IsUnrecoverable(string personHandle);
+
     /// <summary>Begins a recovery: checks the rule and returns assertion options for the heir over the rotation's challenge.</summary>
     /// <param name="personHandle">The authenticated person's handle.</param>
     /// <param name="removesCredentialId">The lost key-set passkey to take out of sign-in, or null when it is already gone.</param>

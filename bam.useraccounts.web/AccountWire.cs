@@ -360,6 +360,14 @@ public sealed class PasskeyListResponse
 
     /// <summary>Whether the person can start a recovery: this host can recover, they have a key set, no passkey holds it, and nothing is waiting.</summary>
     public bool KeySetRecoverable { get; set; }
+
+    /// <summary>
+    /// Whether the person has a key set no passkey holds, nothing is waiting, and no recovery can start
+    /// for it, so the client should send them to support.  Omitted when false; never true together
+    /// with <see cref="KeySetRecoverable"/>, and false when the person has no key set.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool KeySetUnrecoverable { get; set; }
 }
 
 /// <summary>One passkey as the manage page shows it.  No key material.</summary>

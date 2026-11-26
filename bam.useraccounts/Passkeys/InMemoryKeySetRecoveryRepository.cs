@@ -2,8 +2,10 @@ namespace Bam.UserAccounts.Passkeys;
 
 /// <summary>
 /// Process-local <see cref="IKeySetRecoveryRepository"/> for tests and single-process hosts.
-/// Register as a singleton; recoveries do not survive a restart, so a host that restarts within
-/// <see cref="PasskeyOptions.RecoveryDelay"/> loses its pending recoveries.
+/// Register as a singleton.  Recoveries and removed-key records do not survive a restart, so a host
+/// that restarts within <see cref="PasskeyOptions.RecoveryDelay"/> loses its pending recoveries.  If
+/// a lost recovery had already removed the passkey that held the key set, the key set can then only
+/// be recovered by an operator (bam.useraccounts#29).
 /// </summary>
 public sealed class InMemoryKeySetRecoveryRepository : IKeySetRecoveryRepository
 {

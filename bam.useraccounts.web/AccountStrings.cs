@@ -144,7 +144,7 @@ public sealed class AccountStrings
     public string RecoveryConfirmation { get; set; } = "Move your account key to this passkey? It moves after a waiting period, and any of your signed-in devices can cancel it until then.";
 
     /// <summary>The banner while a recovery waits.  <c>{0}</c> is the heir passkey's name, <c>{1}</c> the date the key moves.</summary>
-    public string RecoveryPendingBanner { get; set; } = "Your account key moves to {0} on {1}. Until then you can cancel it here or on any device you're signed in on. If you didn't start this, cancel it now.";
+    public string RecoveryPendingBanner { get; set; } = "Your account key moves to {0} on {1}. Until then you can cancel it here or on any device you're signed in on. If you didn't start this, cancel it and remove that passkey.";
 
     /// <summary>The heading of the banner while a recovery waits (the native app uses the same words).</summary>
     public string RecoveryPendingTitle { get; set; } = "Your account key is moving";
@@ -154,6 +154,9 @@ public sealed class AccountStrings
 
     /// <summary>The heading of the note when no passkey holds the account key and it can be recovered.</summary>
     public string RecoveryRecoverableTitle { get; set; } = "No passkey holds your account key";
+
+    /// <summary>Shown under that heading when no recovery can start for the key set (the passkeys list's <c>keySetUnrecoverable</c>); the native app uses the same words.</summary>
+    public string RecoveryUnrecoverableNote { get; set; } = "This account's key can't be recovered from this device. Contact support.";
 
     /// <summary>The button that cancels a waiting recovery.</summary>
     public string CancelRecovery { get; set; } = "Cancel the move";

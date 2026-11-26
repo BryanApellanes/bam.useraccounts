@@ -49,6 +49,13 @@
             <PasskeyButton Mode="recover" Label="@Site.Strings.RecoverKeySet" />
         </div>
     }
+    else if (_unrecoverable)
+    {
+        <div class="account-recovery account-unrecoverable alert alert-warning">
+            <p class="account-recovery-title"><strong>@Site.Strings.RecoveryRecoverableTitle</strong></p>
+            <p>@Site.Strings.RecoveryUnrecoverableNote</p>
+        </div>
+    }
     <ul class="account-passkeys list-group">
         @foreach (PasskeyCredentialData passkey in _passkeys)
         {
@@ -100,6 +107,7 @@
     private HashSet<string> _keySetHolders = new HashSet<string>(StringComparer.Ordinal);
     private bool _recoveryAvailable;
     private bool _recoverable;
+    private bool _unrecoverable;
     private PendingKeySetRecoveryData? _pending;
 
     /// <summary>The current request, supplied by static server rendering.</summary>
@@ -125,6 +133,7 @@
         _recoveryAvailable = Recovery.IsAvailable;
         _pending = Recovery.Pending(handle);
         _recoverable = _pending is null && Recovery.IsRecoverable(handle);
+        _unrecoverable = _pending is null && !_recoverable && Recovery.IsUnrecoverable(handle);
         // Whether removing the key-set passkey moves the key first (#20) or leaves it on record (A).
         _keySetMoves = Handover.IsAvailable;
         // Where the key set can move, the badge follows the registrar (what removing the passkey will
