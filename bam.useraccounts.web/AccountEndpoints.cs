@@ -55,6 +55,10 @@ public static class AccountEndpoints
         // they share the ceremony endpoints' per-client budget rather than going unlimited.
         group.MapPost("/passkeys/{credentialId}/handover/begin", BeginHandoverAsync).RequireAuthorization(AccountWebRegistration.Policy).RequireRateLimiting(AccountRateLimitOptions.AnonymousPolicy);
         group.MapPost("/passkeys/{credentialId}/handover/complete", CompleteHandoverAsync).RequireAuthorization(AccountWebRegistration.Policy).RequireRateLimiting(AccountRateLimitOptions.AnonymousPolicy);
+        // Lost-device recovery (bam.protocol#85): begin and complete run a ceremony, like the handover.
+        group.MapPost("/keyset/recovery/begin", BeginRecoveryAsync).RequireAuthorization(AccountWebRegistration.Policy).RequireRateLimiting(AccountRateLimitOptions.AnonymousPolicy);
+        group.MapPost("/keyset/recovery/complete", CompleteRecoveryAsync).RequireAuthorization(AccountWebRegistration.Policy).RequireRateLimiting(AccountRateLimitOptions.AnonymousPolicy);
+        group.MapPost("/keyset/recovery/{recoveryId}/cancel", CancelRecovery).RequireAuthorization(AccountWebRegistration.Policy).RequireRateLimiting(AccountRateLimitOptions.AnonymousPolicy);
         group.MapPost("/profile", CompleteProfileAsync).RequireAuthorization(AccountWebRegistration.Policy);
         return group;
     }
@@ -76,6 +80,7 @@ public static class AccountEndpoints
             || request.Path.StartsWithSegments(AccountRoutes.Prefix + "/passkeys")
             || request.Path.StartsWithSegments(AccountRoutes.Prefix + "/signout")
             || request.Path.StartsWithSegments(AccountRoutes.Prefix + "/profile")
+            || request.Path.StartsWithSegments(AccountRoutes.Prefix + "/keyset")
             || request.Path.StartsWithSegments(AccountRoutes.Prefix + "/handle");
     }
 
@@ -160,7 +165,7 @@ public static class AccountEndpoints
         return Json(new RequestOptionsResponse { Options = options, CeremonyId = options.CeremonyId ?? string.Empty });
     }
 
-    private static async Task<IResult> CompleteAssertionAsync(HttpContext context, IPasskeyCeremony ceremony, AccountSession session, AccountSiteOptions site)
+    private static async Task<IResult> CompleteAssertionAsync(HttpContext context, IPasskeyCeremony ceremony, IKeySetRecovery recovery, AccountSession session, AccountSiteOptions site)
     {
         AssertionCompleteRequest? body = await ReadAsync<AssertionCompleteRequest>(context.Request);
         if (body is null || body.Credential is null)
@@ -176,11 +181,29 @@ public static class AccountEndpoints
             return Refusal(StatusCodes.Status400BadRequest, AccountErrorCodes.SignInFailed, site.Strings.SignInFailedMessage);
         }
         await session.SignInAsync(context, principal);
+        string handle = AccountPrincipal.Handle(principal)!;
+        // A due recovery moves the key set on the person's next sign-in; it never fails the sign-in.
+        recovery.Settle(handle);
+        // A recovery still waiting is shown at every sign-in, and the person lands on the manage
+        // page, where they can cancel it: the delay protects them only if they see it.
+        // A store fault here is logged and answers with no waiting recovery rather than failing a
+        // sign-in whose cookie is already issued; the manage page reads it again.
+        PendingKeySetRecoveryData? pending;
+        try
+        {
+            pending = recovery.Pending(handle);
+        }
+        catch (Exception e)
+        {
+            Log.Warn("Sign-in for {0} could not read its waiting recovery: {1}", PasskeyText.Printable(handle), PasskeyText.Printable(e.Message, PasskeyVerification.MaxDetailLength));
+            pending = null;
+        }
         return Json(new SignedInResponse
         {
-            Handle = AccountPrincipal.Handle(principal)!,
+            Handle = handle,
             DisplayName = AccountPrincipal.DisplayName(principal)!,
-            NextUrl = AccountRoutes.LocalOr(body.ReturnUrl, site.DefaultReturnUrl)
+            NextUrl = pending is null ? AccountRoutes.LocalOr(body.ReturnUrl, site.DefaultReturnUrl) : AccountRoutes.Manage,
+            PendingRecovery = pending is null ? null : PendingRecoverySummary.Of(pending)
         });
     }
 
@@ -224,15 +247,21 @@ public static class AccountEndpoints
         return Json(new AvailabilityResponse { Handle = availability.Handle, Available = availability.Available, Reason = availability.Reason.ToString() });
     }
 
-    private static IResult ListPasskeys(HttpContext context, IPasskeyInventory inventory)
+    private static IResult ListPasskeys(HttpContext context, IPasskeyInventory inventory, IKeySetRecovery recovery)
     {
         string handle = AccountPrincipal.Handle(context.User)!;
         string? current = AccountPrincipal.CredentialId(context.User);
+        // A due recovery settles here, so a client that only reads the list sees the key set move.
+        recovery.Settle(handle);
         PasskeyListResponse response = new PasskeyListResponse();
         foreach (PasskeyCredentialData credential in inventory.List(handle).OrderBy(credential => credential.CreatedUtc))
         {
             response.Passkeys.Add(PasskeySummary.Of(credential, current));
         }
+        PendingKeySetRecoveryData? pending = recovery.Pending(handle);
+        response.PendingRecovery = pending is null ? null : PendingRecoverySummary.Of(pending);
+        response.KeySetRecoverable = pending is null && recovery.IsRecoverable(handle);
+        response.KeySetUnrecoverable = pending is null && !response.KeySetRecoverable && recovery.IsUnrecoverable(handle);
         return Json(response);
     }
 
@@ -329,6 +358,83 @@ public static class AccountEndpoints
         return await RemovedAsync(context, session, site, result.RemovedCredentialId ?? credentialId);
     }
 
+    private static async Task<IResult> BeginRecoveryAsync(HttpContext context, IKeySetRecovery recovery, AccountSiteOptions site)
+    {
+        RecoveryBeginRequest? body = await ReadAsync<RecoveryBeginRequest>(context.Request);
+        if (body is null)
+        {
+            return BadRequest(site);
+        }
+        string handle = AccountPrincipal.Handle(context.User)!;
+        KeySetRecoveryStart start = recovery.Begin(handle, string.IsNullOrWhiteSpace(body.Removes) ? null : body.Removes,
+            string.IsNullOrWhiteSpace(body.Heir) ? null : body.Heir, AccountPrincipal.CredentialId(context.User));
+        if (start.Refusal == KeySetRecoveryRefusal.HeirTooNew && start.EligibleUtc is DateTime eligibleUtc)
+        {
+            HeirTooNewError error = new HeirTooNewError { Message = site.Strings.RecoveryHeirTooNewMessage, EligibleUtc = eligibleUtc };
+            return Results.Content(PasskeyJson.Serialize(error), "application/json", System.Text.Encoding.UTF8, StatusCodes.Status409Conflict);
+        }
+        if (!start.Success || start.Options is null || start.RecoveryId is null)
+        {
+            return RecoveryRefused(start.Refusal, site);
+        }
+        return Json(new RecoveryBeginResponse { RecoveryId = start.RecoveryId, Options = start.Options });
+    }
+
+    private static async Task<IResult> CompleteRecoveryAsync(HttpContext context, IKeySetRecovery recovery, AccountSession session, AccountSiteOptions site)
+    {
+        RecoveryCompleteRequest? body = await ReadAsync<RecoveryCompleteRequest>(context.Request);
+        if (body is null || body.Credential is null || string.IsNullOrEmpty(body.RecoveryId))
+        {
+            return BadRequest(site);
+        }
+        string handle = AccountPrincipal.Handle(context.User)!;
+        byte[] assertionJson = System.Text.Encoding.UTF8.GetBytes(PasskeyJson.Serialize(body.Credential));
+        KeySetRecoveryResult result = recovery.Complete(handle, body.RecoveryId, assertionJson);
+        if (!result.Success || result.EffectiveUtc is null)
+        {
+            return RecoveryRefused(result.Refusal, site);
+        }
+        // The removed passkey's other sessions end on their next request (the session check finds no
+        // credential); this one ends now if it was opened with it.
+        bool wasCurrent = result.RemovedCredentialId is not null && string.Equals(AccountPrincipal.CredentialId(context.User), result.RemovedCredentialId, StringComparison.Ordinal);
+        if (wasCurrent)
+        {
+            await session.SignOutAsync(context);
+        }
+        RecoveryCompleteResponse response = new RecoveryCompleteResponse { SignedOut = wasCurrent, NextUrl = wasCurrent ? site.SignedOutUrl : null, EffectiveUtc = result.EffectiveUtc.Value };
+        return Results.Content(PasskeyJson.Serialize(response), "application/json", System.Text.Encoding.UTF8, StatusCodes.Status202Accepted);
+    }
+
+    private static IResult CancelRecovery(string recoveryId, HttpContext context, IKeySetRecovery recovery, AccountSiteOptions site)
+    {
+        string handle = AccountPrincipal.Handle(context.User)!;
+        if (!recovery.Cancel(handle, recoveryId, AccountPrincipal.CredentialId(context.User)))
+        {
+            return Refusal(StatusCodes.Status404NotFound, AccountErrorCodes.NotFound, site.Strings.ActionFailedMessage);
+        }
+        return Results.NoContent();
+    }
+
+    private static IResult RecoveryRefused(KeySetRecoveryRefusal refusal, AccountSiteOptions site)
+    {
+        AccountStrings strings = site.Strings;
+        return refusal switch
+        {
+            KeySetRecoveryRefusal.NotFound => Refusal(StatusCodes.Status404NotFound, AccountErrorCodes.NotFound, strings.ActionFailedMessage),
+            KeySetRecoveryRefusal.NotKeySet => Refusal(StatusCodes.Status400BadRequest, AccountErrorCodes.NotKeySet, strings.ActionFailedMessage),
+            KeySetRecoveryRefusal.InvalidHeir => Refusal(StatusCodes.Status400BadRequest, AccountErrorCodes.InvalidHeir, strings.ActionFailedMessage),
+            KeySetRecoveryRefusal.RemovesRequired => Refusal(StatusCodes.Status400BadRequest, AccountErrorCodes.RemovesRequired, strings.ActionFailedMessage),
+            KeySetRecoveryRefusal.HeirTooNew => Refusal(StatusCodes.Status409Conflict, AccountErrorCodes.HeirTooNew, strings.RecoveryHeirTooNewMessage),
+            KeySetRecoveryRefusal.RecoveryPending => Refusal(StatusCodes.Status409Conflict, AccountErrorCodes.RecoveryPending, strings.RecoveryPendingMessage),
+            KeySetRecoveryRefusal.NoKeySet => Refusal(StatusCodes.Status409Conflict, AccountErrorCodes.NoKeySet, strings.ActionFailedMessage),
+            KeySetRecoveryRefusal.RotationUnavailable => Refusal(StatusCodes.Status409Conflict, AccountErrorCodes.RotationUnavailable, strings.KeySetRotationUnavailableMessage),
+            KeySetRecoveryRefusal.RecoveryExpired => Refusal(StatusCodes.Status400BadRequest, AccountErrorCodes.HandoverExpired, strings.RecoveryFailedMessage),
+            KeySetRecoveryRefusal.KeySetChanged => Refusal(StatusCodes.Status409Conflict, AccountErrorCodes.KeySetChanged, strings.RecoveryFailedMessage),
+            KeySetRecoveryRefusal.HeirGone => Refusal(StatusCodes.Status409Conflict, AccountErrorCodes.HeirGone, strings.RecoveryFailedMessage),
+            _ => Refusal(StatusCodes.Status400BadRequest, AccountErrorCodes.ProofRefused, strings.RecoveryFailedMessage)
+        };
+    }
+
     // The body DELETE and handover/complete both return: a session signed in with the removed passkey ends.
     private static async Task<IResult> RemovedAsync(HttpContext context, AccountSession session, AccountSiteOptions site, string removedCredentialId)
     {
@@ -349,7 +455,8 @@ public static class AccountEndpoints
             KeySetHandoverRefusal.LastCredential => Refusal(StatusCodes.Status409Conflict, AccountErrorCodes.LastCredential, strings.LastPasskeyMessage),
             KeySetHandoverRefusal.InvalidHeir => Refusal(StatusCodes.Status400BadRequest, AccountErrorCodes.InvalidHeir, strings.ActionFailedMessage),
             KeySetHandoverRefusal.NotKeySet => Refusal(StatusCodes.Status400BadRequest, AccountErrorCodes.NotKeySet, strings.ActionFailedMessage),
-            KeySetHandoverRefusal.RotationUnavailable => Refusal(StatusCodes.Status409Conflict, AccountErrorCodes.RotationUnavailable, strings.KeySetKeepConfirmation),
+            KeySetHandoverRefusal.RotationUnavailable => Refusal(StatusCodes.Status409Conflict, AccountErrorCodes.RotationUnavailable, strings.KeySetRotationUnavailableMessage),
+            KeySetHandoverRefusal.RecoveryPending => Refusal(StatusCodes.Status409Conflict, AccountErrorCodes.RecoveryPending, strings.RecoveryPendingMessage),
             KeySetHandoverRefusal.HandoverExpired => Refusal(StatusCodes.Status400BadRequest, AccountErrorCodes.HandoverExpired, strings.HandoverFailedMessage),
             KeySetHandoverRefusal.KeySetChanged => Refusal(StatusCodes.Status409Conflict, AccountErrorCodes.KeySetChanged, strings.HandoverFailedMessage),
             KeySetHandoverRefusal.HeirGone => Refusal(StatusCodes.Status409Conflict, AccountErrorCodes.HeirGone, strings.HandoverFailedMessage),

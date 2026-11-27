@@ -5,7 +5,7 @@
 
 <PageTitle>@Title · @Site.ProductName</PageTitle>
 <link rel="stylesheet" href="@AccountRoutes.Stylesheet" />
-<div class="account-shell" style="@Site.Theme.ToStyleAttribute()" data-account-config="@AccountClientConfig.For(Site).ToJson()">
+<div class="account-shell" style="@Site.Theme.ToStyleAttribute()" data-account-config="@AccountClientConfig.For(Site, RecoveryAvailable).ToJson()">
     <main class="account-card card">
         <header class="account-brand">
             @if (!string.IsNullOrWhiteSpace(Site.LogoUrl))
@@ -30,6 +30,10 @@
     /// <summary>The page heading and the first half of the document title.</summary>
     [Parameter, EditorRequired]
     public string Title { get; set; } = string.Empty;
+
+    /// <summary>Whether the host can recover a key set (the manage page passes <c>IKeySetRecovery.IsAvailable</c>); picks the removal wording.</summary>
+    [Parameter]
+    public bool RecoveryAvailable { get; set; }
 
     /// <summary>The page body.</summary>
     [Parameter]

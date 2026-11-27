@@ -20,6 +20,14 @@ public sealed class AccountClientConfig
     /// <param name="site">The host's account options.</param>
     public static AccountClientConfig For(AccountSiteOptions site)
     {
+        return For(site, recoveryAvailable: false);
+    }
+
+    /// <summary>Builds the configuration for a host's options.</summary>
+    /// <param name="site">The host's account options.</param>
+    /// <param name="recoveryAvailable">Whether the host can recover a key set after the key-set passkey is removed (<see cref="IKeySetRecovery.IsAvailable"/>); picks the removal wording that says so.</param>
+    public static AccountClientConfig For(AccountSiteOptions site, bool recoveryAvailable)
+    {
         ArgumentNullException.ThrowIfNull(site);
         AccountStrings strings = site.Strings;
         AccountClientConfig config = new AccountClientConfig { Availability = site.SignUp.AllowHandleAvailabilityCheck };
@@ -32,8 +40,9 @@ public sealed class AccountClientConfig
         config.Messages["working"] = strings.WorkingMessage;
         config.Messages["removeConfirmation"] = strings.RemoveConfirmation;
         config.Messages["keySetHandoverPrompt"] = strings.KeySetHandoverPrompt;
-        config.Messages["keySetKeepConfirmation"] = strings.KeySetKeepConfirmation;
+        config.Messages["keySetKeepConfirmation"] = recoveryAvailable ? strings.KeySetKeepRecoverableConfirmation : strings.KeySetKeepConfirmation;
         config.Messages["handoverFailed"] = strings.HandoverFailedMessage;
+        config.Messages["recoveryConfirmation"] = strings.RecoveryConfirmation;
         config.Messages["handleTaken"] = strings.HandleTakenMessage;
         config.Messages["handleInvalid"] = strings.HandleInvalidMessage;
         config.Messages["handleAvailable"] = strings.HandleAvailableMessage;

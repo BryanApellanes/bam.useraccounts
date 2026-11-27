@@ -247,7 +247,35 @@ if (removal == PasskeyRemoval.KeySetHandoverRequired)
 - Without it, `Remove` behaves as before: the passkey goes and its key stays registered until revoked (`IsAvailable` is false, `Begin` refuses with `RotationUnavailable`). `Remove(handle, id, keepKeySet: true)` does that on purpose.
 - The proof anchors only a key set that is exactly one accepted passkey's key under that handle, and verifies an assertion by that passkey over SHA-256 of the tagged rotation payload (`PasskeyKeySetRotationProof.Challenge`). Its failure messages carry no assertion bytes or credential ids.
 - The challenge is single-use. A refused, expired or abandoned handover changes nothing: both passkeys and the key set stay as they were. If the key set moved or the heir went away in between, `Complete` refuses with `KeySetChanged` or `HeirGone`.
-- Recovery when the key-set passkey is lost is bam.protocol#85; it isn't built yet.
+- A lost key-set passkey can't sign a handover; see the next section.
+
+### Recovering the key set after the key-set passkey is lost
+
+When the passkey that holds the key set is lost, it can't sign a handover. `IKeySetRecovery` moves the key set to a surviving passkey instead, under a rule that makes a stolen session a poor way to take an account (bam.protocol#85, option 2):
+
+- The heir must be at least `PasskeyOptions.RecoveryCredentialAge` old (7 days) and must assert with user verification over the rotation challenge.
+- The key set moves `PasskeyOptions.RecoveryDelay` (72 hours) after the recovery is proved. Until then the old key still verifies as the handle, and any signed-in session of the person can cancel it.
+- The lost passkey stops signing in at once. Its key is blocklisted only when the key set moves.
+
+```csharp
+IKeySetRecovery recovery = registry.Get<IKeySetRecovery>();
+// removes: the lost passkey, or null when it was already removed with ?keySet=keep.
+KeySetRecoveryStart start = recovery.Begin("person-handle", lostCredentialId, heirCredentialId: null, sessionCredentialId);
+// start.Options goes to navigator.credentials.get(); post the assertion JSON back.
+KeySetRecoveryResult proved = recovery.Complete("person-handle", start.RecoveryId!, assertionJsonBytes);
+// proved.EffectiveUtc is when the key set moves. Cancel before then:
+recovery.Cancel("person-handle", start.RecoveryId!, sessionCredentialId);
+// Any request after EffectiveUtc settles it; Settle never throws.
+recovery.Settle("person-handle");
+```
+
+- Recovery is available when both `PasskeyKeySetRotationProof` and `PasskeyRecoveryRotationProof` are trusted. `AddPasskeyKeySetRotation` adds both.
+- Waiting recoveries are kept in `IKeySetRecoveryRepository`: `PersistedKeySetRecoveryRepository` when the registry has an `IRepository`, else in memory with a warning. The in-memory store suits a single-process host only. A restart loses a waiting recovery and the removed-key records with it. If that recovery had already removed the lost passkey, the key set can then be recovered only by an operator (bam.useraccounts#29). Another instance can't see or cancel a recovery.
+- A recovery that names no `removes` moves only a key set holding exactly the key of a passkey the person removed (the store records each removed passkey's key). A key set no passkey of the person held, such as an admin rebind or a device key, is refused as `NoKeySet` and isn't offered.
+- `PasskeyRecoveryRotationProof` anchors a key set only while exactly one open recovery for that handle began from it and is due: both its effective time and its begin time plus the current delay have passed, the same rule `Settle` uses. It verifies the stored assertion again (signature, challenge, user verification; the counter was checked at complete), so a row altered at rest doesn't move the key. The tombstone reads `rotation:passkey-recovery`.
+- Complete refuses an assertion whose signed parts (authenticator data, client data and signature) match one an earlier recovery of the person stored. Changing unsigned JSON fields doesn't get past it, so replaying a canceled recovery's assertion can't restart it (a synced passkey's counter stays at 0). What's left: an ES256 signature can be re-encoded as a second valid one, so only a server nonce in the challenge closes replay fully (bam.useraccounts#32). Such a replay gains nothing, because the key set still moves only to the heir, and canceling ends it again. To stop a recovery you didn't start, cancel it and remove the heir passkey. `Update` writes only the end and completion fields, forward only: a canceled recovery stays canceled.
+- One recovery waits at a time, and a handover is refused while one waits. Removing the heir cancels it. A key set that moved some other way ends it. A refusal at settle (the proof refuses cleanly, or the heir key is blocklisted or claimed) ends it. A fault never does: a store error while the proof or the registrar verifies, and `KeySetRotationTooSoonException` (bam.protocol#91), leave it waiting for the next request.
+- Begin refuses `HeirTooNew` with the time the heir becomes eligible, plus `NotFound`, `NotKeySet`, `RemovesRequired`, `InvalidHeir`, `NoKeySet`, `RotationUnavailable` and `RecoveryPending`. Complete refuses `RecoveryExpired`, `ProofRefused`, `KeySetChanged`, `HeirGone` and `RecoveryPending`; a refused complete changes nothing.
 
 ## Known Gaps / Not Yet Implemented
 

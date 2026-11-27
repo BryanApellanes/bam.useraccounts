@@ -31,7 +31,10 @@ public enum KeySetHandoverRefusal
     KeySetChanged,
 
     /// <summary>The heir was removed since the handover began.</summary>
-    HeirGone
+    HeirGone,
+
+    /// <summary>A lost-device recovery is waiting for this person (bam.protocol#85): cancel it, or let it settle, first.</summary>
+    RecoveryPending
 }
 
 /// <summary>The outcome of <see cref="IKeySetHandover.Begin"/>.</summary>
